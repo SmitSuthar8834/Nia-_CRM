@@ -1,0 +1,30 @@
+Final Reminder: Complete Debriefing for {{ meeting.title }}
+
+Hi {{ user.first_name|default:user.username }},
+
+LAST CHANCE: This is your final reminder to complete the debriefing for the meeting below. After this, the session will be marked as skipped.
+
+Meeting: {{ meeting.title }}
+Date: {{ meeting.start_time|date:"F j, Y" }}
+Time: {{ meeting.start_time|time:"g:i A" }} - {{ meeting.end_time|time:"g:i A" }}
+Originally Scheduled: {{ session.scheduled_time|date:"F j, Y g:i A" }}
+
+We understand you're busy, so we're offering two options:
+
+1. Complete Full Debriefing: {{ debriefing_url }}
+2. Take 2-Minute Survey: {{ quick_survey_url }}
+
+Quick Survey Option:
+Short on time? Our 2-minute survey captures the essential meeting outcomes:
+- Meeting outcome rating
+- Key next steps
+- Follow-up requirements
+- Basic insights
+
+While not as comprehensive as the full debriefing, it ensures critical information isn't lost.
+
+What happens if you don't respond?
+If no action is taken, this debriefing will be marked as skipped, and you'll receive a quick survey link as a final opportunity to capture basic meeting information.
+
+---
+This is the final automated reminder from your NIA Meeting Intelligence system.

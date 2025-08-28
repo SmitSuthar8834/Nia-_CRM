@@ -1,13 +1,19 @@
-# Intelligent Meeting Workflow System
+# Intelligent Meeting Workflow System (NIA CRM)
 
-A comprehensive meeting intelligence platform that automates the entire lead-to-meeting lifecycle, integrating Creatio CRM, Google Calendar, AI assistance, and n8n workflow automation.
+A comprehensive AI-powered meeting intelligence platform that automates the entire lead-to-meeting lifecycle, integrating Creatio CRM, Google Calendar, AI assistance, and n8n workflow automation.
 
 ## Features
 
+- **Calendar Integration**: Smart meeting detection across Google Calendar, Outlook, and Exchange
+- **AI-Powered Debriefing**: Automated post-meeting conversations with context-aware questioning
 - **Lead Synchronization**: Automatic sync from Creatio CRM every 15 minutes
-- **Meeting-Lead Matching**: AI-powered matching with >85% accuracy
+- **Meeting-Lead Matching**: AI-powered matching with >85% accuracy using multi-tier algorithms
 - **Real-time AI Assistant**: Live meeting support with question suggestions and note-taking
 - **CRM Integration**: Automated post-meeting updates and follow-up task creation
+- **Competitive Intelligence**: Systematic capture and analysis of competitor information
+- **Follow-up Management**: Automated action item tracking and commitment management
+- **Pipeline Intelligence**: Lead qualification and progression assessment
+- **Analytics & Reporting**: Comprehensive performance and data quality metrics
 - **WebSocket Support**: Real-time updates during meetings
 - **RESTful API**: Comprehensive API for all operations
 
@@ -20,171 +26,132 @@ A comprehensive meeting intelligence platform that automates the entire lead-to-
 - **AI Integration**: Google Gemini API
 - **Workflow Engine**: n8n for automation
 - **Authentication**: JWT with OAuth2 for external APIs
+- **Calendar APIs**: Google Calendar, Microsoft Graph
 
-## Project Structure
+## Quick Start
 
-```
-intelligent_meeting_workflow/
-├── intelligent_meeting_workflow/    # Main Django project
-├── leads/                          # Lead management app
-├── meetings/                       # Meeting management app
-├── ai_assistant/                   # AI assistant app
-├── requirements.txt                # Python dependencies
-├── manage.py                       # Django management script
-└── README.md                       # This file
-```
+### Using Docker (Recommended)
 
-## Setup Instructions
-
-### 1. Environment Setup
-
+1. Clone the repository:
 ```bash
-# Create virtual environment
+git clone <repository-url>
+cd intelligent_meeting_workflow
+```
+
+2. Copy environment variables:
+```bash
+cp .env.example .env
+```
+
+3. Update the `.env` file with your API keys and configuration
+
+4. Start the services:
+```bash
+docker-compose up -d
+```
+
+5. Run migrations:
+```bash
+docker-compose exec web python manage.py migrate
+```
+
+6. Create a superuser:
+```bash
+docker-compose exec web python manage.py createsuperuser
+```
+
+7. Access the application:
+- Web interface: http://localhost:8000
+- Admin interface: http://localhost:8000/admin
+
+### Manual Setup
+
+1. Install Python 3.11+ and PostgreSQL
+
+2. Create a virtual environment:
+```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-# Install dependencies
+3. Install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Database Setup
+4. Set up environment variables (copy .env.example to .env)
 
+5. Run migrations:
 ```bash
-# Create PostgreSQL database
-createdb intelligent_meeting_workflow
-
-# Run migrations
-python manage.py makemigrations
 python manage.py migrate
-
-# Create superuser
-python manage.py createsuperuser
 ```
 
-### 3. Redis Setup
-
-Make sure Redis is running on localhost:6379 or update the REDIS_URL in settings.
-
-### 4. Environment Variables
-
-Copy `.env.example` to `.env` and update the values:
-
+6. Start the development server:
 ```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-### 5. Run the Development Server
-
-```bash
-# Start Django development server
 python manage.py runserver
-
-# In another terminal, start Celery worker
-celery -A intelligent_meeting_workflow worker -l info
-
-# In another terminal, start Celery beat (for scheduled tasks)
-celery -A intelligent_meeting_workflow beat -l info
 ```
 
-## API Endpoints
+## Configuration
 
-### Authentication
-- `POST /api/auth/token/` - Obtain JWT token
-- `POST /api/auth/token/refresh/` - Refresh JWT token
+### Required Environment Variables
 
-### Leads
-- `GET /api/leads/` - List leads
-- `POST /api/leads/` - Create lead
-- `GET /api/leads/{id}/` - Get lead details
-- `PUT /api/leads/{id}/` - Update lead
-- `POST /api/leads/sync/` - Sync leads from CRM (webhook)
-- `PUT /api/leads/{id}/status/` - Update lead status
+- `GEMINI_API_KEY`: Google Gemini AI API key
+- `CREATIO_API_URL`: Your Creatio CRM instance URL
+- `CREATIO_CLIENT_ID`: Creatio OAuth client ID
+- `CREATIO_CLIENT_SECRET`: Creatio OAuth client secret
+- `GOOGLE_CALENDAR_CREDENTIALS_FILE`: Path to Google Calendar credentials JSON
 
-### Meetings
-- `GET /api/meetings/` - List meetings
-- `POST /api/meetings/` - Create meeting
-- `GET /api/meetings/{id}/` - Get meeting details
-- `POST /api/meetings/match-lead/` - Match meeting to lead (webhook)
-- `POST /api/meetings/{id}/start/` - Start meeting session
-- `POST /api/meetings/{id}/end/` - End meeting session
+### Optional Configuration
 
-### AI Assistant
-- `POST /api/ai/initialize/` - Initialize AI session
-- `POST /api/ai/questions/` - Generate question suggestions
-- `POST /api/ai/notes/` - Process meeting notes
-- `POST /api/ai/summary/` - Generate meeting summary
+- `DEBUG`: Enable debug mode (default: True)
+- `ALLOWED_HOSTS`: Comma-separated list of allowed hosts
+- `CORS_ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
 
-## Testing
+## API Documentation
 
-Run the test suite:
+Once the server is running, API documentation is available at:
+- Swagger UI: http://localhost:8000/api/docs/
+- ReDoc: http://localhost:8000/api/redoc/
+
+## Development
+
+### Running Tests
 
 ```bash
-# Run all tests
 python manage.py test
-
-# Run specific app tests
-python manage.py test leads
-python manage.py test meetings
-python manage.py test ai_assistant
-
-# Run with pytest (if installed)
-pytest
-
-# Run tests with coverage
-python run_tests.py
 ```
 
-## WebSocket Endpoints
+### Code Quality
 
-- `ws://localhost:8000/ws/meetings/{meeting_id}/` - Real-time meeting updates
+```bash
+# Format code
+black .
 
-## Models
+# Check linting
+flake8 .
 
-### Lead Model
-- Stores lead information from Creatio CRM
-- Includes validation for required fields
-- Indexed for performance on email, company, status
+# Type checking
+mypy .
+```
 
-### Meeting Model
-- Represents calendar events matched to leads
-- Tracks match confidence scores
-- Supports various meeting statuses
+### Database Migrations
 
-### MeetingSession Model
-- Manages AI-powered meeting sessions
-- Stores notes, transcripts, and action items
-- Tracks session duration and status
+```bash
+# Create migrations
+python manage.py makemigrations
 
-### ActionItem Model
-- Extracted action items from meetings
-- Assignee and due date tracking
-- CRM task integration
-
-## Development Guidelines
-
-1. **Code Style**: Follow PEP 8 and Django best practices
-2. **Testing**: Write tests for all new features
-3. **Documentation**: Update README and docstrings
-4. **Security**: Use proper authentication and validation
-5. **Performance**: Optimize database queries and use caching
-
-## Deployment
-
-The application is designed to be deployed with:
-- Docker containers for scalability
-- PostgreSQL for production database
-- Redis for caching and message broker
-- nginx for reverse proxy
-- SSL/TLS for security
+# Apply migrations
+python manage.py migrate
+```
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Write tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+3. Make your changes
+4. Write tests for new functionality
+5. Ensure all tests pass
+6. Submit a pull request
 
 ## License
 

@@ -1,0 +1,26 @@
+Debriefing Ready: {{ meeting.title }}
+
+Hi {{ user.first_name|default:user.username }},
+
+Your debriefing session for the following meeting is ready to start:
+
+Meeting: {{ meeting.title }}
+Date: {{ meeting.start_time|date:"F j, Y" }}
+Time: {{ meeting.start_time|time:"g:i A" }} - {{ meeting.end_time|time:"g:i A" }}
+Duration: {{ meeting.duration_minutes }} minutes
+
+Capture your meeting insights while they're fresh! The AI assistant will guide you through a quick conversation to extract key information and update your CRM automatically.
+
+Start your debriefing: {{ debriefing_url }}
+
+Why debrief now?
+- Capture important details while they're fresh in your memory
+- Automatically update your CRM with meeting insights
+- Track competitive intelligence and next steps
+- Improve your sales process with AI-powered analysis
+
+The debriefing typically takes 3-5 minutes and will help ensure no important details are lost.
+
+---
+This is an automated reminder from your NIA Meeting Intelligence system.
+If you need to reschedule, visit: {{ reschedule_url }}
