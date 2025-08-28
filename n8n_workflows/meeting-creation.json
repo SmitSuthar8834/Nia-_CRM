@@ -1,0 +1,320 @@
+{
+  "name": "Meeting Creation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-created",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Google Calendar Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "google-calendar-meeting-created"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate meeting data from Google Calendar webhook\nconst webhookData = $input.first().json;\n\n// Validate required fields\nif (!webhookData.summary || !webhookData.start || !webhookData.attendees) {\n  throw new Error('Missing required meeting data from webhook');\n}\n\n// Extract meeting information\nconst meetingData = {\n  calendar_event_id: webhookData.id,\n  title: webhookData.summary,\n  start_time: webhookData.start.dateTime || webhookData.start.date,\n  end_time: webhookData.end.dateTime || webhookData.end.date,\n  attendees: webhookData.attendees || [],\n  description: webhookData.description || '',\n  location: webhookData.location || '',\n  organizer: webhookData.organizer || {},\n  created: webhookData.created,\n  updated: webhookData.updated\n};\n\n// Extract attendee emails for matching\nconst attendeeEmails = meetingData.attendees\n  .filter(attendee => attendee.email)\n  .map(attendee => attendee.email.toLowerCase());\n\n// Extract potential company names from email domains\nconst emailDomains = attendeeEmails\n  .map(email => email.split('@')[1])\n  .filter(domain => domain && !['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com'].includes(domain));\n\nreturn [{\n  json: {\n    meeting: meetingData,\n    matching_data: {\n      attendee_emails: attendeeEmails,\n      email_domains: emailDomains,\n      meeting_title: meetingData.title.toLowerCase(),\n      organizer_email: meetingData.organizer.email?.toLowerCase() || ''\n    }\n  }\n}];"
+      },
+      "id": "extract-meeting-data",
+      "name": "Extract Meeting Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/meetings/match-lead",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.matching_data}}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "match-lead",
+      "name": "Match Meeting to Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        680,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "match-found",
+              "leftValue": "={{$json.match_found}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "confidence-check",
+              "leftValue": "={{$json.confidence_score}}",
+              "rightValue": 0.85,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-match-quality",
+      "name": "Check Match Quality",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/meetings/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"calendar_event_id\": \"{{$('Extract Meeting Data').item.json.meeting.calendar_event_id}}\",\n  \"lead_id\": \"{{$json.lead_id}}\",\n  \"title\": \"{{$('Extract Meeting Data').item.json.meeting.title}}\",\n  \"start_time\": \"{{$('Extract Meeting Data').item.json.meeting.start_time}}\",\n  \"end_time\": \"{{$('Extract Meeting Data').item.json.meeting.end_time}}\",\n  \"attendees\": {{$('Extract Meeting Data').item.json.meeting.attendees}},\n  \"match_confidence\": {{$json.confidence_score}},\n  \"status\": \"matched\",\n  \"description\": \"{{$('Extract Meeting Data').item.json.meeting.description}}\",\n  \"location\": \"{{$('Extract Meeting Data').item.json.meeting.location}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "create-matched-meeting",
+      "name": "Create Matched Meeting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/meetings/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"calendar_event_id\": \"{{$('Extract Meeting Data').item.json.meeting.calendar_event_id}}\",\n  \"lead_id\": null,\n  \"title\": \"{{$('Extract Meeting Data').item.json.meeting.title}}\",\n  \"start_time\": \"{{$('Extract Meeting Data').item.json.meeting.start_time}}\",\n  \"end_time\": \"{{$('Extract Meeting Data').item.json.meeting.end_time}}\",\n  \"attendees\": {{$('Extract Meeting Data').item.json.meeting.attendees}},\n  \"match_confidence\": {{$('Match Meeting to Lead').item.json.confidence_score || 0}},\n  \"status\": \"unmatched\",\n  \"description\": \"{{$('Extract Meeting Data').item.json.meeting.description}}\",\n  \"location\": \"{{$('Extract Meeting Data').item.json.meeting.location}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "create-unmatched-meeting",
+      "name": "Create Unmatched Meeting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"meeting_matched\",\n  \"meeting_id\": \"{{$json.id}}\",\n  \"meeting_title\": \"{{$('Extract Meeting Data').item.json.meeting.title}}\",\n  \"lead_name\": \"{{$('Match Meeting to Lead').item.json.lead_name}}\",\n  \"lead_company\": \"{{$('Match Meeting to Lead').item.json.lead_company}}\",\n  \"confidence_score\": {{$('Match Meeting to Lead').item.json.confidence_score}},\n  \"start_time\": \"{{$('Extract Meeting Data').item.json.meeting.start_time}}\",\n  \"message\": \"Meeting '{{$('Extract Meeting Data').item.json.meeting.title}}' successfully matched to lead {{$('Match Meeting to Lead').item.json.lead_name}} with {{Math.round($('Match Meeting to Lead').item.json.confidence_score * 100)}}% confidence\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-match-notification",
+      "name": "Send Match Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"meeting_unmatched\",\n  \"meeting_id\": \"{{$json.id}}\",\n  \"meeting_title\": \"{{$('Extract Meeting Data').item.json.meeting.title}}\",\n  \"confidence_score\": {{$('Match Meeting to Lead').item.json.confidence_score || 0}},\n  \"start_time\": \"{{$('Extract Meeting Data').item.json.meeting.start_time}}\",\n  \"attendees\": {{$('Extract Meeting Data').item.json.meeting.attendees}},\n  \"message\": \"Meeting '{{$('Extract Meeting Data').item.json.meeting.title}}' requires manual lead association (confidence: {{Math.round(($('Match Meeting to Lead').item.json.confidence_score || 0) * 100)}}%)\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-unmatched-notification",
+      "name": "Send Unmatched Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"meeting_id\": \"{{$('Create Matched Meeting').item.json.id || $('Create Unmatched Meeting').item.json.id}}\",\n  \"matched\": {{$('Check Match Quality').item.json ? true : false}},\n  \"confidence_score\": {{$('Match Meeting to Lead').item.json.confidence_score || 0}},\n  \"message\": \"Meeting processed successfully\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Google Calendar Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Meeting Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Meeting Data": {
+      "main": [
+        [
+          {
+            "node": "Match Meeting to Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match Meeting to Lead": {
+      "main": [
+        [
+          {
+            "node": "Check Match Quality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Match Quality": {
+      "main": [
+        [
+          {
+            "node": "Create Matched Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Unmatched Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Matched Meeting": {
+      "main": [
+        [
+          {
+            "node": "Send Match Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Unmatched Meeting": {
+      "main": [
+        [
+          {
+            "node": "Send Unmatched Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Match Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Unmatched Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "meeting-creation",
+      "name": "meeting-creation"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

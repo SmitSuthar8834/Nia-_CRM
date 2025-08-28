@@ -1,0 +1,203 @@
+{
+  "name": "Meeting Creation Workflow Test",
+  "description": "Test configuration for meeting creation workflow with various scenarios",
+  "testCases": [
+    {
+      "name": "High Confidence Match",
+      "mockData": {
+        "google_calendar_webhook": {
+          "id": "test-event-1",
+          "summary": "Sales Meeting with John Doe",
+          "start": {
+            "dateTime": "2024-01-15T14:00:00Z"
+          },
+          "end": {
+            "dateTime": "2024-01-15T15:00:00Z"
+          },
+          "attendees": [
+            {
+              "email": "john.doe@example.com",
+              "displayName": "John Doe"
+            },
+            {
+              "email": "sales@ourcompany.com",
+              "displayName": "Sales Team"
+            }
+          ],
+          "organizer": {
+            "email": "sales@ourcompany.com"
+          },
+          "description": "Quarterly review meeting",
+          "location": "Conference Room A",
+          "created": "2024-01-10T10:00:00Z",
+          "updated": "2024-01-10T10:00:00Z"
+        },
+        "django_match_response": {
+          "match_found": true,
+          "lead_id": "lead-123",
+          "lead_name": "John Doe",
+          "lead_company": "Example Corp",
+          "confidence_score": 0.95,
+          "matching_factors": [
+            "email_exact_match",
+            "name_exact_match",
+            "company_domain_match"
+          ]
+        }
+      },
+      "expectedBehavior": {
+        "should_create_meeting": true,
+        "meeting_status": "matched",
+        "should_send_notification": true,
+        "notification_type": "meeting_matched"
+      }
+    },
+    {
+      "name": "Low Confidence Match",
+      "mockData": {
+        "google_calendar_webhook": {
+          "id": "test-event-2",
+          "summary": "Team Standup",
+          "start": {
+            "dateTime": "2024-01-16T09:00:00Z"
+          },
+          "end": {
+            "dateTime": "2024-01-16T09:30:00Z"
+          },
+          "attendees": [
+            {
+              "email": "unknown@external.com",
+              "displayName": "Unknown Person"
+            }
+          ],
+          "organizer": {
+            "email": "manager@ourcompany.com"
+          }
+        },
+        "django_match_response": {
+          "match_found": true,
+          "lead_id": "lead-456",
+          "lead_name": "Similar Name",
+          "lead_company": "Different Corp",
+          "confidence_score": 0.65,
+          "matching_factors": [
+            "partial_name_match"
+          ]
+        }
+      },
+      "expectedBehavior": {
+        "should_create_meeting": true,
+        "meeting_status": "unmatched",
+        "should_send_notification": true,
+        "notification_type": "meeting_unmatched"
+      }
+    },
+    {
+      "name": "No Match Found",
+      "mockData": {
+        "google_calendar_webhook": {
+          "id": "test-event-3",
+          "summary": "Internal Team Meeting",
+          "start": {
+            "dateTime": "2024-01-17T11:00:00Z"
+          },
+          "end": {
+            "dateTime": "2024-01-17T12:00:00Z"
+          },
+          "attendees": [
+            {
+              "email": "internal1@ourcompany.com",
+              "displayName": "Team Member 1"
+            },
+            {
+              "email": "internal2@ourcompany.com",
+              "displayName": "Team Member 2"
+            }
+          ],
+          "organizer": {
+            "email": "manager@ourcompany.com"
+          }
+        },
+        "django_match_response": {
+          "match_found": false,
+          "confidence_score": 0.0,
+          "message": "No matching leads found"
+        }
+      },
+      "expectedBehavior": {
+        "should_create_meeting": true,
+        "meeting_status": "unmatched",
+        "should_send_notification": true,
+        "notification_type": "meeting_unmatched"
+      }
+    },
+    {
+      "name": "Invalid Webhook Data",
+      "mockData": {
+        "google_calendar_webhook": {
+          "id": "test-event-4",
+          "summary": null,
+          "start": null,
+          "attendees": null
+        }
+      },
+      "expectedBehavior": {
+        "should_throw_error": true,
+        "error_message": "Missing required meeting data from webhook"
+      }
+    },
+    {
+      "name": "API Error Handling",
+      "mockData": {
+        "google_calendar_webhook": {
+          "id": "test-event-5",
+          "summary": "Valid Meeting",
+          "start": {
+            "dateTime": "2024-01-18T14:00:00Z"
+          },
+          "end": {
+            "dateTime": "2024-01-18T15:00:00Z"
+          },
+          "attendees": [
+            {
+              "email": "test@example.com"
+            }
+          ],
+          "organizer": {
+            "email": "organizer@ourcompany.com"
+          }
+        },
+        "django_match_response": {
+          "error": "Service temporarily unavailable",
+          "status": 503
+        }
+      },
+      "expectedBehavior": {
+        "should_retry": true,
+        "max_retries": 3,
+        "should_create_unmatched_meeting": true,
+        "meeting_status": "unmatched"
+      }
+    }
+  ],
+  "environment_variables": {
+    "DJANGO_API_URL": "https://test-django.example.com",
+    "NOTIFICATION_WEBHOOK_URL": "https://test-notifications.example.com/webhook"
+  },
+  "credentials_required": [
+    {
+      "type": "httpHeaderAuth",
+      "name": "Django API Key",
+      "description": "API key for Django backend authentication"
+    }
+  ],
+  "webhook_configuration": {
+    "path": "meeting-created",
+    "method": "POST",
+    "expected_headers": {
+      "Content-Type": "application/json",
+      "X-Goog-Channel-ID": "google-calendar-webhook",
+      "X-Goog-Resource-State": "exists"
+    }
+  }
+}

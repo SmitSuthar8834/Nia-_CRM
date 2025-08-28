@@ -1,0 +1,526 @@
+{
+  "name": "CRM Update Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-completed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Meeting Completion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "meeting-completed-crm-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate meeting completion data\nconst webhookData = $input.first().json;\n\n// Validate required fields\nif (!webhookData.meeting_id) {\n  throw new Error('Missing meeting_id in webhook data');\n}\n\nif (!webhookData.meeting_outcome) {\n  throw new Error('Missing meeting_outcome in webhook data');\n}\n\n// Extract meeting completion data\nconst meetingData = {\n  meeting_id: webhookData.meeting_id,\n  lead_id: webhookData.lead_id,\n  meeting_outcome: webhookData.meeting_outcome,\n  notes: webhookData.notes || '',\n  action_items: webhookData.action_items || [],\n  summary: webhookData.summary || '',\n  next_steps: webhookData.next_steps || [],\n  meeting_duration: webhookData.meeting_duration || 0,\n  attendees: webhookData.attendees || [],\n  completed_at: webhookData.completed_at || new Date().toISOString(),\n  user_id: webhookData.user_id || null\n};\n\n// Validate meeting_id and lead_id are numeric\nif (isNaN(parseInt(meetingData.meeting_id))) {\n  throw new Error('Invalid meeting_id format');\n}\n\nif (meetingData.lead_id && isNaN(parseInt(meetingData.lead_id))) {\n  throw new Error('Invalid lead_id format');\n}\n\n// Validate meeting_outcome is valid\nconst validOutcomes = ['successful', 'no_show', 'rescheduled', 'cancelled', 'qualified', 'not_qualified'];\nif (!validOutcomes.includes(meetingData.meeting_outcome)) {\n  throw new Error(`Invalid meeting_outcome: ${meetingData.meeting_outcome}`);\n}\n\nconsole.log(`Processing CRM update for meeting ${meetingData.meeting_id} with outcome: ${meetingData.meeting_outcome}`);\n\nreturn [{\n  json: meetingData\n}];"
+      },
+      "id": "extract-meeting-data",
+      "name": "Extract Meeting Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/leads/{{$json.lead_id}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-lead-data",
+      "name": "Fetch Lead Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format meeting data for Creatio CRM\nconst meetingData = $('Extract Meeting Data').first().json;\nconst leadData = $input.first().json;\n\n// Format notes for CRM\nconst formatNotesForCRM = (notes, summary, actionItems) => {\n  let formattedNotes = '';\n  \n  if (summary) {\n    formattedNotes += `MEETING SUMMARY:\\n${summary}\\n\\n`;\n  }\n  \n  if (notes) {\n    formattedNotes += `DETAILED NOTES:\\n${notes}\\n\\n`;\n  }\n  \n  if (actionItems && actionItems.length > 0) {\n    formattedNotes += `ACTION ITEMS:\\n`;\n    actionItems.forEach((item, index) => {\n      formattedNotes += `${index + 1}. ${item.description}`;\n      if (item.assignee) formattedNotes += ` (Assigned to: ${item.assignee})`;\n      if (item.due_date) formattedNotes += ` (Due: ${item.due_date})`;\n      formattedNotes += '\\n';\n    });\n  }\n  \n  return formattedNotes.trim();\n};\n\n// Map meeting outcomes to CRM status\nconst mapOutcomeToCRMStatus = (outcome) => {\n  const statusMap = {\n    'successful': 'Meeting Completed',\n    'qualified': 'Qualified',\n    'not_qualified': 'Not Qualified',\n    'no_show': 'No Show',\n    'rescheduled': 'Rescheduled',\n    'cancelled': 'Cancelled'\n  };\n  return statusMap[outcome] || 'Meeting Completed';\n};\n\n// Calculate next follow-up date based on outcome\nconst calculateFollowUpDate = (outcome, actionItems) => {\n  const now = new Date();\n  let followUpDate = new Date(now);\n  \n  switch (outcome) {\n    case 'qualified':\n      followUpDate.setDate(now.getDate() + 3); // 3 days for qualified leads\n      break;\n    case 'successful':\n      followUpDate.setDate(now.getDate() + 7); // 1 week for successful meetings\n      break;\n    case 'rescheduled':\n      followUpDate.setDate(now.getDate() + 1); // Next day for rescheduled\n      break;\n    case 'no_show':\n      followUpDate.setDate(now.getDate() + 2); // 2 days for no-shows\n      break;\n    default:\n      followUpDate.setDate(now.getDate() + 14); // 2 weeks default\n  }\n  \n  // Check if any action items have earlier due dates\n  if (actionItems && actionItems.length > 0) {\n    const earliestDueDate = actionItems\n      .filter(item => item.due_date)\n      .map(item => new Date(item.due_date))\n      .sort((a, b) => a - b)[0];\n    \n    if (earliestDueDate && earliestDueDate < followUpDate) {\n      followUpDate = earliestDueDate;\n    }\n  }\n  \n  return followUpDate.toISOString().split('T')[0]; // Return YYYY-MM-DD format\n};\n\n// Create CRM update payload\nconst crmUpdateData = {\n  lead_id: leadData.crm_id || leadData.id,\n  meeting_data: {\n    status: mapOutcomeToCRMStatus(meetingData.meeting_outcome),\n    notes: formatNotesForCRM(meetingData.notes, meetingData.summary, meetingData.action_items),\n    meeting_date: meetingData.completed_at,\n    duration_minutes: meetingData.meeting_duration,\n    attendees: meetingData.attendees.map(a => a.displayName || a.email).join(', '),\n    outcome: meetingData.meeting_outcome,\n    next_follow_up_date: calculateFollowUpDate(meetingData.meeting_outcome, meetingData.action_items)\n  },\n  action_items: meetingData.action_items.map(item => ({\n    description: item.description,\n    assignee: item.assignee || 'Sales Rep',\n    due_date: item.due_date || calculateFollowUpDate(meetingData.meeting_outcome, []),\n    priority: item.priority || 'Medium',\n    status: 'Open'\n  })),\n  lead_updates: {\n    last_contact_date: meetingData.completed_at,\n    last_contact_type: 'Meeting',\n    lead_score_adjustment: meetingData.meeting_outcome === 'qualified' ? 10 : \n                          meetingData.meeting_outcome === 'not_qualified' ? -5 : 0\n  }\n};\n\nconsole.log(`Formatted CRM data for lead ${crmUpdateData.lead_id}`);\n\nreturn [{\n  json: {\n    ...meetingData,\n    crm_update_data: crmUpdateData,\n    lead_crm_id: leadData.crm_id || leadData.id,\n    lead_name: leadData.name,\n    lead_company: leadData.company\n  }\n}];"
+      },
+      "id": "format-crm-data",
+      "name": "Format CRM Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CREATIO_API_URL}}/leads/{{$json.lead_crm_id}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "creatioOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"Status\": \"{{$json.crm_update_data.meeting_data.status}}\",\n  \"Notes\": \"{{$json.crm_update_data.meeting_data.notes}}\",\n  \"LastContactDate\": \"{{$json.crm_update_data.lead_updates.last_contact_date}}\",\n  \"LastContactType\": \"{{$json.crm_update_data.lead_updates.last_contact_type}}\",\n  \"NextFollowUpDate\": \"{{$json.crm_update_data.meeting_data.next_follow_up_date}}\",\n  \"MeetingOutcome\": \"{{$json.crm_update_data.meeting_data.outcome}}\",\n  \"MeetingDuration\": {{$json.crm_update_data.meeting_data.duration_minutes}},\n  \"Attendees\": \"{{$json.crm_update_data.meeting_data.attendees}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "update-crm-lead",
+      "name": "Update CRM Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-action-items",
+              "leftValue": "={{$json.crm_update_data.action_items.length}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-action-items",
+      "name": "Check Action Items",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create follow-up tasks in CRM for each action item\nconst meetingData = $input.first().json;\nconst actionItems = meetingData.crm_update_data.action_items;\n\nconst tasks = actionItems.map((item, index) => ({\n  task_data: {\n    Subject: `Follow-up: ${item.description}`,\n    Description: `Action item from meeting with ${meetingData.lead_name} (${meetingData.lead_company})\\n\\nOriginal item: ${item.description}`,\n    DueDate: item.due_date,\n    Priority: item.priority,\n    Status: 'Not Started',\n    AssignedTo: item.assignee,\n    RelatedLeadId: meetingData.lead_crm_id,\n    TaskType: 'Follow-up',\n    CreatedFromMeeting: meetingData.meeting_id\n  },\n  item_index: index\n}));\n\nconsole.log(`Creating ${tasks.length} follow-up tasks in CRM`);\n\nreturn tasks.map(task => ({ json: { ...meetingData, current_task: task } }));"
+      },
+      "id": "prepare-follow-up-tasks",
+      "name": "Prepare Follow-up Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CREATIO_API_URL}}/tasks",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "creatioOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify($json.current_task.task_data)}}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1500
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "create-crm-task",
+      "name": "Create CRM Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "crm-update-success",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-crm-update-success",
+      "name": "Check CRM Update Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/meetings/{{$json.meeting_id}}/sync-status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"crm_sync_status\": \"completed\",\n  \"crm_sync_timestamp\": \"{{new Date().toISOString()}}\",\n  \"tasks_created\": {{$json.crm_update_data.action_items.length}},\n  \"lead_updated\": true,\n  \"sync_details\": {\n    \"lead_id\": \"{{$json.lead_crm_id}}\",\n    \"outcome\": \"{{$json.meeting_outcome}}\",\n    \"notes_length\": {{$json.crm_update_data.meeting_data.notes.length}}\n  }\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 2,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "update-sync-status-success",
+      "name": "Update Sync Status - Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle CRM update failure\nconst errorResponse = $input.first().json;\nconst meetingData = $('Format CRM Data').first().json;\n\n// Determine error type and create error details\nlet errorType = 'unknown_error';\nlet errorMessage = 'CRM update failed';\nlet retryable = true;\n\nif (errorResponse.error) {\n  errorMessage = errorResponse.error;\n  \n  // Categorize error types\n  if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {\n    errorType = 'auth_error';\n    retryable = false;\n  } else if (errorMessage.includes('not found') || errorMessage.includes('404')) {\n    errorType = 'lead_not_found';\n    retryable = false;\n  } else if (errorMessage.includes('timeout') || errorMessage.includes('connection')) {\n    errorType = 'network_error';\n    retryable = true;\n  } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {\n    errorType = 'rate_limit';\n    retryable = true;\n  } else if (errorMessage.includes('validation') || errorMessage.includes('400')) {\n    errorType = 'validation_error';\n    retryable = false;\n  }\n}\n\nconst errorDetails = {\n  error_type: errorType,\n  error_message: errorMessage,\n  retryable: retryable,\n  meeting_id: meetingData.meeting_id,\n  lead_crm_id: meetingData.lead_crm_id,\n  failed_at: new Date().toISOString(),\n  meeting_outcome: meetingData.meeting_outcome\n};\n\nconsole.error(`CRM update failed for meeting ${meetingData.meeting_id}: ${errorMessage}`);\n\nreturn [{\n  json: {\n    ...meetingData,\n    error_details: errorDetails\n  }\n}];"
+      },
+      "id": "handle-crm-error",
+      "name": "Handle CRM Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/meetings/{{$json.meeting_id}}/sync-status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"crm_sync_status\": \"failed\",\n  \"crm_sync_timestamp\": \"{{$json.error_details.failed_at}}\",\n  \"error_type\": \"{{$json.error_details.error_type}}\",\n  \"error_message\": \"{{$json.error_details.error_message}}\",\n  \"retryable\": {{$json.error_details.retryable}},\n  \"sync_details\": {\n    \"lead_id\": \"{{$json.lead_crm_id}}\",\n    \"outcome\": \"{{$json.meeting_outcome}}\"\n  }\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 2,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "update-sync-status-error",
+      "name": "Update Sync Status - Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-retryable",
+              "leftValue": "={{$json.error_details.retryable}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "retry-count-check",
+              "leftValue": "={{$executionData?.retry || 0}}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-retry-condition",
+      "name": "Check Retry Condition",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Implement exponential backoff retry logic\nconst errorData = $input.first().json;\nconst currentRetry = $executionData?.retry || 0;\nconst maxRetries = 2;\n\nif (currentRetry < maxRetries) {\n  const backoffDelay = Math.pow(2, currentRetry) * 3000; // 3s, 6s, 12s\n  \n  console.log(`Retrying CRM update, attempt ${currentRetry + 1}/${maxRetries + 1} in ${backoffDelay}ms`);\n  \n  // Wait for backoff delay\n  setTimeout(() => {}, backoffDelay);\n  \n  // Return original meeting data for retry\n  const originalMeetingData = $('Format CRM Data').first().json;\n  \n  return [{\n    json: {\n      ...originalMeetingData,\n      retry_attempt: currentRetry + 1,\n      backoff_delay: backoffDelay\n    }\n  }];\n} else {\n  console.log('Max retries reached, proceeding with error handling');\n  return [{\n    json: errorData\n  }];\n}"
+      },
+      "id": "retry-with-backoff",
+      "name": "Retry with Exponential Backoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"crm_update_success\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"lead_name\": \"{{$json.lead_name}}\",\n  \"lead_company\": \"{{$json.lead_company}}\",\n  \"meeting_outcome\": \"{{$json.meeting_outcome}}\",\n  \"tasks_created\": {{$json.crm_update_data.action_items.length}},\n  \"sync_timestamp\": \"{{new Date().toISOString()}}\",\n  \"message\": \"Successfully updated CRM for meeting with {{$json.lead_name}} ({{$json.lead_company}}). Outcome: {{$json.meeting_outcome}}, Tasks created: {{$json.crm_update_data.action_items.length}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-success-notification",
+      "name": "Send Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 350]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"crm_update_error\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"lead_name\": \"{{$json.lead_name}}\",\n  \"lead_company\": \"{{$json.lead_company}}\",\n  \"error_type\": \"{{$json.error_details.error_type}}\",\n  \"error_message\": \"{{$json.error_details.error_message}}\",\n  \"retryable\": {{$json.error_details.retryable}},\n  \"severity\": \"{{$json.error_details.retryable ? 'warning' : 'error'}}\",\n  \"message\": \"Failed to update CRM for meeting with {{$json.lead_name}} ({{$json.lead_company}}): {{$json.error_details.error_message}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-error-notification",
+      "name": "Send Error Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"{{$json.crm_sync_status || ($json.error_details ? 'failed' : 'success')}}\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"lead_updated\": {{!$json.error_details}},\n  \"tasks_created\": {{$json.crm_update_data ? $json.crm_update_data.action_items.length : 0}},\n  \"error_type\": \"{{$json.error_details ? $json.error_details.error_type : ''}}\",\n  \"retryable\": {{$json.error_details ? $json.error_details.retryable : false}},\n  \"message\": \"CRM update {{$json.error_details ? 'failed' : 'completed successfully'}} for meeting {{$json.meeting_id}}\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 400]
+    }
+  ],
+  "connections": {
+    "Meeting Completion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Meeting Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Meeting Data": {
+      "main": [
+        [
+          {
+            "node": "Fetch Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Format CRM Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format CRM Data": {
+      "main": [
+        [
+          {
+            "node": "Update CRM Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM Lead": {
+      "main": [
+        [
+          {
+            "node": "Check Action Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check CRM Update Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Action Items": {
+      "main": [
+        [
+          {
+            "node": "Prepare Follow-up Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Follow-up Tasks": {
+      "main": [
+        [
+          {
+            "node": "Create CRM Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check CRM Update Success": {
+      "main": [
+        [
+          {
+            "node": "Update Sync Status - Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle CRM Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sync Status - Success": {
+      "main": [
+        [
+          {
+            "node": "Send Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle CRM Error": {
+      "main": [
+        [
+          {
+            "node": "Update Sync Status - Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sync Status - Error": {
+      "main": [
+        [
+          {
+            "node": "Check Retry Condition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Retry Condition": {
+      "main": [
+        [
+          {
+            "node": "Retry with Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry with Exponential Backoff": {
+      "main": [
+        [
+          {
+            "node": "Update CRM Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "crm-update",
+      "name": "crm-update"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,276 @@
+{
+  "name": "Lead Sync Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.CREATIO_API_URL}}/0/odata/Lead",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "oAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "$filter",
+              "value": "ModifiedOn gt datetime'{{$now.minus({minutes: 15}).format('yyyy-MM-ddTHH:mm:ss')}}'"
+            },
+            {
+              "name": "$select",
+              "value": "Id,Name,Email,Account,MobilePhone,LeadTypeId,QualifyStatus,CreatedOn,ModifiedOn"
+            },
+            {
+              "name": "$expand",
+              "value": "Account($select=Name,Id)"
+            }
+          ]
+        },
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 5,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "creatio-api-fetch",
+      "name": "Fetch Leads from Creatio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        460,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "error-check",
+              "leftValue": "={{$json.error}}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "notExists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "error-check-if",
+      "name": "Check for API Errors",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transform Creatio lead data to Django format\nconst leads = $input.all();\nconst transformedLeads = [];\n\nfor (const item of leads) {\n  const leadData = item.json;\n  \n  // Skip if no value array (empty response)\n  if (!leadData.value || !Array.isArray(leadData.value)) {\n    continue;\n  }\n  \n  for (const lead of leadData.value) {\n    const transformedLead = {\n      crm_id: lead.Id,\n      name: lead.Name || '',\n      email: lead.Email || '',\n      company: lead.Account?.Name || '',\n      phone: lead.MobilePhone || '',\n      status: lead.QualifyStatus?.Name || 'new',\n      source: 'creatio',\n      created_at: lead.CreatedOn,\n      updated_at: lead.ModifiedOn,\n      last_sync: new Date().toISOString()\n    };\n    \n    transformedLeads.push(transformedLead);\n  }\n}\n\n// Return transformed data\nreturn transformedLeads.map(lead => ({ json: lead }));"
+      },
+      "id": "transform-data",
+      "name": "Transform Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/leads/sync",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "django-webhook",
+      "name": "Send to Django API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log successful sync\nconst syncResults = $input.all();\nconst successCount = syncResults.filter(item => !item.json.error).length;\nconst errorCount = syncResults.filter(item => item.json.error).length;\n\nconsole.log(`Lead sync completed: ${successCount} successful, ${errorCount} errors`);\n\nreturn [{\n  json: {\n    timestamp: new Date().toISOString(),\n    success_count: successCount,\n    error_count: errorCount,\n    status: errorCount === 0 ? 'success' : 'partial_success'\n  }\n}];"
+      },
+      "id": "log-results",
+      "name": "Log Sync Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle API errors with exponential backoff\nconst errorData = $input.all();\nconst currentRetry = $executionData?.retry || 0;\nconst maxRetries = 5;\n\nif (currentRetry < maxRetries) {\n  const backoffDelay = Math.pow(2, currentRetry) * 1000; // Exponential backoff\n  \n  console.error(`API error occurred, retry ${currentRetry + 1}/${maxRetries} in ${backoffDelay}ms`);\n  \n  // Set retry data for next attempt\n  return [{\n    json: {\n      error: true,\n      retry: currentRetry + 1,\n      delay: backoffDelay,\n      message: 'Retrying after API error'\n    }\n  }];\n} else {\n  console.error('Max retries reached, logging error and continuing');\n  \n  return [{\n    json: {\n      error: true,\n      max_retries_reached: true,\n      timestamp: new Date().toISOString(),\n      message: 'Lead sync failed after maximum retries'\n    }\n  }];\n}"
+      },
+      "id": "error-handler",
+      "name": "Handle API Errors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/system/log-error",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow\": \"lead-sync\",\n  \"error_type\": \"api_error\",\n  \"message\": {{$json.message}},\n  \"timestamp\": \"{{$json.timestamp}}\",\n  \"retry_count\": {{$json.retry || 0}}\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "log-error",
+      "name": "Log Error to Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1120,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Leads from Creatio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Leads from Creatio": {
+      "main": [
+        [
+          {
+            "node": "Check for API Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for API Errors": {
+      "main": [
+        [
+          {
+            "node": "Transform Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle API Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Django API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Django API": {
+      "main": [
+        [
+          {
+            "node": "Log Sync Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle API Errors": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "lead-sync",
+      "name": "lead-sync"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

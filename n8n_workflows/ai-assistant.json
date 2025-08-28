@@ -1,0 +1,378 @@
+{
+  "name": "AI Assistant Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-started",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Meeting Start Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "meeting-started-ai-assistant"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate meeting start data\nconst webhookData = $input.first().json;\n\n// Validate required fields\nif (!webhookData.meeting_id) {\n  throw new Error('Missing meeting_id in webhook data');\n}\n\n// Extract meeting and lead context\nconst meetingData = {\n  meeting_id: webhookData.meeting_id,\n  lead_context: webhookData.lead_context || {},\n  meeting_title: webhookData.meeting_title || '',\n  start_time: webhookData.start_time || new Date().toISOString(),\n  attendees: webhookData.attendees || [],\n  user_id: webhookData.user_id || null\n};\n\n// Validate meeting_id is numeric\nif (isNaN(parseInt(meetingData.meeting_id))) {\n  throw new Error('Invalid meeting_id format');\n}\n\n// Ensure lead_context has required structure\nif (meetingData.lead_context && typeof meetingData.lead_context !== 'object') {\n  meetingData.lead_context = {};\n}\n\nconsole.log(`Processing AI session initialization for meeting ${meetingData.meeting_id}`);\n\nreturn [{\n  json: meetingData\n}];"
+      },
+      "id": "extract-meeting-data",
+      "name": "Extract Meeting Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/ai/initialize",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"meeting_id\": {{$json.meeting_id}},\n  \"lead_context\": {{JSON.stringify($json.lead_context)}}\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "initialize-ai-session",
+      "name": "Initialize AI Session",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "success-check",
+              "leftValue": "={{$json.success}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "session-exists",
+              "leftValue": "={{$json.session}}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-initialization-success",
+      "name": "Check Initialization Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process successful AI session initialization\nconst initResponse = $input.first().json;\nconst meetingData = $('Extract Meeting Data').first().json;\n\nconst sessionData = {\n  session_id: initResponse.session.session_id,\n  meeting_id: initResponse.session.meeting_id,\n  ai_available: initResponse.ai_available,\n  lead_context: initResponse.session.lead_context,\n  created_at: initResponse.session.created_at,\n  status: 'active'\n};\n\n// Generate initial context-aware questions if AI is available\nconst initialQuestions = [];\nif (initResponse.ai_available && meetingData.lead_context) {\n  const leadName = meetingData.lead_context.name || 'the lead';\n  const leadCompany = meetingData.lead_context.company || 'their company';\n  \n  initialQuestions.push(\n    `How has ${leadCompany} been performing recently?`,\n    `What are the main challenges ${leadName} is facing?`,\n    `What goals is ${leadCompany} hoping to achieve?`\n  );\n}\n\nconsole.log(`AI session initialized successfully: ${sessionData.session_id}`);\n\nreturn [{\n  json: {\n    ...sessionData,\n    initial_questions: initialQuestions,\n    meeting_title: meetingData.meeting_title,\n    start_time: meetingData.start_time\n  }\n}];"
+      },
+      "id": "process-success",
+      "name": "Process Successful Initialization",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle AI session initialization failure\nconst errorResponse = $input.first().json;\nconst meetingData = $('Extract Meeting Data').first().json;\n\n// Determine error type and create fallback response\nlet errorType = 'unknown_error';\nlet errorMessage = 'AI session initialization failed';\nlet fallbackAvailable = true;\n\nif (errorResponse.error) {\n  errorMessage = errorResponse.error;\n  \n  // Categorize error types\n  if (errorMessage.includes('AI service') || errorMessage.includes('Gemini')) {\n    errorType = 'ai_service_error';\n  } else if (errorMessage.includes('meeting') || errorMessage.includes('not found')) {\n    errorType = 'meeting_not_found';\n    fallbackAvailable = false;\n  } else if (errorMessage.includes('authentication') || errorMessage.includes('permission')) {\n    errorType = 'auth_error';\n    fallbackAvailable = false;\n  } else if (errorMessage.includes('timeout') || errorMessage.includes('connection')) {\n    errorType = 'network_error';\n  }\n}\n\n// Create fallback session data for graceful degradation\nconst fallbackSession = {\n  session_id: `fallback_${meetingData.meeting_id}_${Date.now()}`,\n  meeting_id: meetingData.meeting_id,\n  ai_available: false,\n  status: 'fallback',\n  error_type: errorType,\n  error_message: errorMessage,\n  fallback_available: fallbackAvailable,\n  created_at: new Date().toISOString()\n};\n\n// Generate basic fallback questions\nconst fallbackQuestions = [\n  \"How has your business been performing this quarter?\",\n  \"What are your main challenges right now?\",\n  \"What goals are you hoping to achieve?\",\n  \"How did you hear about our solution?\"\n];\n\nconsole.error(`AI session initialization failed for meeting ${meetingData.meeting_id}: ${errorMessage}`);\n\nreturn [{\n  json: {\n    ...fallbackSession,\n    initial_questions: fallbackAvailable ? fallbackQuestions : [],\n    meeting_title: meetingData.meeting_title,\n    start_time: meetingData.start_time\n  }\n}];"
+      },
+      "id": "handle-initialization-error",
+      "name": "Handle Initialization Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"ai_session_started\",\n  \"session_id\": \"{{$json.session_id}}\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"meeting_title\": \"{{$json.meeting_title}}\",\n  \"ai_available\": {{$json.ai_available}},\n  \"initial_questions_count\": {{$json.initial_questions.length}},\n  \"start_time\": \"{{$json.start_time}}\",\n  \"message\": \"AI session started successfully for meeting '{{$json.meeting_title}}' with {{$json.ai_available ? 'full AI capabilities' : 'fallback mode'}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-success-notification",
+      "name": "Send Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/system/log-error",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"workflow\": \"ai-assistant\",\n  \"error_type\": \"{{$json.error_type}}\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"session_id\": \"{{$json.session_id}}\",\n  \"message\": \"{{$json.error_message}}\",\n  \"fallback_available\": {{$json.fallback_available}},\n  \"timestamp\": \"{{$json.created_at}}\",\n  \"severity\": \"{{$json.fallback_available ? 'warning' : 'error'}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 2,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "log-error",
+      "name": "Log Error to Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"ai_session_error\",\n  \"session_id\": \"{{$json.session_id}}\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"meeting_title\": \"{{$json.meeting_title}}\",\n  \"error_type\": \"{{$json.error_type}}\",\n  \"error_message\": \"{{$json.error_message}}\",\n  \"fallback_available\": {{$json.fallback_available}},\n  \"severity\": \"{{$json.fallback_available ? 'warning' : 'error'}}\",\n  \"message\": \"AI session initialization {{$json.fallback_available ? 'degraded to fallback mode' : 'failed'}} for meeting '{{$json.meeting_title}}': {{$json.error_message}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-error-notification",
+      "name": "Send Error Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"{{$json.ai_available ? 'success' : ($json.fallback_available ? 'degraded' : 'failed')}}\",\n  \"session_id\": \"{{$json.session_id}}\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"ai_available\": {{$json.ai_available}},\n  \"fallback_available\": {{$json.fallback_available || false}},\n  \"initial_questions\": {{JSON.stringify($json.initial_questions)}},\n  \"error_type\": \"{{$json.error_type || ''}}\",\n  \"message\": \"AI session {{$json.ai_available ? 'initialized successfully' : ($json.fallback_available ? 'running in fallback mode' : 'initialization failed')}}\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "retry-condition",
+              "leftValue": "={{$json.error_type}}",
+              "rightValue": "network_error",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "retry-count-check",
+              "leftValue": "={{$executionData?.retry || 0}}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-retry-condition",
+      "name": "Check Retry Condition",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1560, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Implement exponential backoff retry logic\nconst errorData = $input.first().json;\nconst currentRetry = $executionData?.retry || 0;\nconst maxRetries = 2;\n\nif (currentRetry < maxRetries) {\n  const backoffDelay = Math.pow(2, currentRetry) * 2000; // 2s, 4s, 8s\n  \n  console.log(`Retrying AI session initialization, attempt ${currentRetry + 1}/${maxRetries + 1} in ${backoffDelay}ms`);\n  \n  // Wait for backoff delay\n  setTimeout(() => {}, backoffDelay);\n  \n  // Return original meeting data for retry\n  const originalMeetingData = $('Extract Meeting Data').first().json;\n  \n  return [{\n    json: {\n      ...originalMeetingData,\n      retry_attempt: currentRetry + 1,\n      backoff_delay: backoffDelay\n    }\n  }];\n} else {\n  console.log('Max retries reached, proceeding with error handling');\n  return [{\n    json: errorData\n  }];\n}"
+      },
+      "id": "retry-with-backoff",
+      "name": "Retry with Exponential Backoff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 500]
+    }
+  ],
+  "connections": {
+    "Meeting Start Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Meeting Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Meeting Data": {
+      "main": [
+        [
+          {
+            "node": "Initialize AI Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize AI Session": {
+      "main": [
+        [
+          {
+            "node": "Check Initialization Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Initialization Success": {
+      "main": [
+        [
+          {
+            "node": "Process Successful Initialization",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Initialization Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Successful Initialization": {
+      "main": [
+        [
+          {
+            "node": "Send Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Initialization Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error to Django",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error to Django": {
+      "main": [
+        [
+          {
+            "node": "Check Retry Condition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Retry Condition": {
+      "main": [
+        [
+          {
+            "node": "Retry with Exponential Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry with Exponential Backoff": {
+      "main": [
+        [
+          {
+            "node": "Initialize AI Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ai-assistant",
+      "name": "ai-assistant"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

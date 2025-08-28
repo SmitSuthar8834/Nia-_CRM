@@ -1,0 +1,537 @@
+{
+  "name": "CRM Update Workflow Test",
+  "description": "Test configuration for CRM update workflow with meeting completion scenarios and error handling",
+  "testCases": [
+    {
+      "name": "Successful Meeting with Action Items",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 123,
+          "lead_id": 456,
+          "meeting_outcome": "qualified",
+          "notes": "Great discussion about their current challenges with scalability. They're interested in our enterprise solution and want to see a demo next week.",
+          "summary": "Productive meeting with qualified lead. Strong interest in enterprise solution, ready to move forward with demo.",
+          "action_items": [
+            {
+              "description": "Schedule product demo for next week",
+              "assignee": "Sales Rep",
+              "due_date": "2024-01-22",
+              "priority": "High"
+            },
+            {
+              "description": "Send enterprise pricing information",
+              "assignee": "Sales Rep",
+              "due_date": "2024-01-18",
+              "priority": "Medium"
+            },
+            {
+              "description": "Connect with their technical team",
+              "assignee": "Solutions Engineer",
+              "due_date": "2024-01-20",
+              "priority": "High"
+            }
+          ],
+          "next_steps": [
+            "Product demo",
+            "Technical discussion",
+            "Proposal preparation"
+          ],
+          "meeting_duration": 45,
+          "attendees": [
+            {
+              "email": "john.doe@example.com",
+              "displayName": "John Doe"
+            },
+            {
+              "email": "sales@ourcompany.com",
+              "displayName": "Sales Rep"
+            }
+          ],
+          "completed_at": "2024-01-15T15:00:00Z",
+          "user_id": "user-456"
+        },
+        "django_lead_response": {
+          "id": 456,
+          "crm_id": "CRM-LEAD-789",
+          "name": "John Doe",
+          "email": "john.doe@example.com",
+          "company": "Example Corp",
+          "phone": "+1234567890",
+          "status": "qualified",
+          "source": "creatio"
+        },
+        "creatio_update_response": {
+          "success": true,
+          "id": "CRM-LEAD-789",
+          "updated_fields": [
+            "Status",
+            "Notes",
+            "LastContactDate",
+            "NextFollowUpDate"
+          ]
+        },
+        "creatio_task_responses": [
+          {
+            "success": true,
+            "id": "TASK-001",
+            "subject": "Follow-up: Schedule product demo for next week"
+          },
+          {
+            "success": true,
+            "id": "TASK-002",
+            "subject": "Follow-up: Send enterprise pricing information"
+          },
+          {
+            "success": true,
+            "id": "TASK-003",
+            "subject": "Follow-up: Connect with their technical team"
+          }
+        ]
+      },
+      "expectedOutput": {
+        "status": "success",
+        "meeting_id": 123,
+        "lead_updated": true,
+        "tasks_created": 3,
+        "error_type": "",
+        "retryable": false,
+        "message": "CRM update completed successfully for meeting 123"
+      },
+      "expectedBehavior": {
+        "should_update_lead_in_crm": true,
+        "should_create_follow_up_tasks": true,
+        "should_send_success_notification": true,
+        "should_update_django_sync_status": true,
+        "notification_type": "crm_update_success"
+      }
+    },
+    {
+      "name": "No Show Meeting",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 124,
+          "lead_id": 457,
+          "meeting_outcome": "no_show",
+          "notes": "Lead did not attend the scheduled meeting. No response to reminder calls.",
+          "summary": "No show - lead did not attend meeting",
+          "action_items": [
+            {
+              "description": "Follow up via email about missed meeting",
+              "assignee": "Sales Rep",
+              "due_date": "2024-01-17",
+              "priority": "Medium"
+            },
+            {
+              "description": "Attempt to reschedule meeting",
+              "assignee": "Sales Rep",
+              "due_date": "2024-01-18",
+              "priority": "Low"
+            }
+          ],
+          "meeting_duration": 0,
+          "attendees": [
+            {
+              "email": "jane.smith@testcorp.com",
+              "displayName": "Jane Smith"
+            }
+          ],
+          "completed_at": "2024-01-15T16:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 457,
+          "crm_id": "CRM-LEAD-790",
+          "name": "Jane Smith",
+          "email": "jane.smith@testcorp.com",
+          "company": "Test Corp",
+          "status": "new"
+        },
+        "creatio_update_response": {
+          "success": true,
+          "id": "CRM-LEAD-790"
+        }
+      },
+      "expectedOutput": {
+        "status": "success",
+        "meeting_id": 124,
+        "lead_updated": true,
+        "tasks_created": 2
+      },
+      "expectedBehavior": {
+        "should_update_lead_status_to_no_show": true,
+        "should_create_follow_up_tasks": true,
+        "should_calculate_shorter_follow_up_date": true
+      }
+    },
+    {
+      "name": "Successful Meeting Without Action Items",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 125,
+          "lead_id": 458,
+          "meeting_outcome": "successful",
+          "notes": "Good introductory meeting. Discussed their current setup and our solutions. They need time to evaluate internally.",
+          "summary": "Successful introductory meeting. Lead needs time for internal evaluation.",
+          "action_items": [],
+          "meeting_duration": 30,
+          "completed_at": "2024-01-15T17:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 458,
+          "crm_id": "CRM-LEAD-791",
+          "name": "Bob Johnson",
+          "company": "Johnson Industries"
+        },
+        "creatio_update_response": {
+          "success": true,
+          "id": "CRM-LEAD-791"
+        }
+      },
+      "expectedOutput": {
+        "status": "success",
+        "meeting_id": 125,
+        "lead_updated": true,
+        "tasks_created": 0
+      },
+      "expectedBehavior": {
+        "should_update_lead_in_crm": true,
+        "should_not_create_tasks": true,
+        "should_set_default_follow_up_date": true
+      }
+    },
+    {
+      "name": "CRM Authentication Error",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 126,
+          "lead_id": 459,
+          "meeting_outcome": "qualified",
+          "notes": "Meeting went well",
+          "action_items": [],
+          "completed_at": "2024-01-15T18:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 459,
+          "crm_id": "CRM-LEAD-792",
+          "name": "Alice Brown",
+          "company": "Brown & Associates"
+        },
+        "creatio_update_response": {
+          "success": false,
+          "error": "Authentication failed - invalid OAuth token",
+          "status_code": 401
+        }
+      },
+      "expectedOutput": {
+        "status": "failed",
+        "meeting_id": 126,
+        "lead_updated": false,
+        "tasks_created": 0,
+        "error_type": "auth_error",
+        "retryable": false
+      },
+      "expectedBehavior": {
+        "should_not_retry": true,
+        "should_log_error": true,
+        "should_send_error_notification": true,
+        "error_severity": "error"
+      }
+    },
+    {
+      "name": "Network Error with Retry Success",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 127,
+          "lead_id": 460,
+          "meeting_outcome": "successful",
+          "notes": "Great meeting",
+          "action_items": [
+            {
+              "description": "Send follow-up email",
+              "assignee": "Sales Rep",
+              "due_date": "2024-01-18"
+            }
+          ],
+          "completed_at": "2024-01-15T19:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 460,
+          "crm_id": "CRM-LEAD-793",
+          "name": "Charlie Wilson",
+          "company": "Wilson Enterprises"
+        }
+      },
+      "retryScenarios": [
+        {
+          "attempt": 1,
+          "response": {
+            "success": false,
+            "error": "Connection timeout - network error",
+            "status_code": 500
+          }
+        },
+        {
+          "attempt": 2,
+          "response": {
+            "success": true,
+            "id": "CRM-LEAD-793"
+          }
+        }
+      ],
+      "expectedBehavior": {
+        "should_retry": true,
+        "max_retries": 2,
+        "backoff_strategy": "exponential",
+        "backoff_delays": [3000, 6000],
+        "final_status": "success"
+      }
+    },
+    {
+      "name": "Lead Not Found in CRM",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 128,
+          "lead_id": 461,
+          "meeting_outcome": "successful",
+          "notes": "Meeting completed",
+          "completed_at": "2024-01-15T20:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 461,
+          "crm_id": "CRM-LEAD-999",
+          "name": "Non Existent",
+          "company": "Ghost Company"
+        },
+        "creatio_update_response": {
+          "success": false,
+          "error": "Lead with ID CRM-LEAD-999 not found",
+          "status_code": 404
+        }
+      },
+      "expectedOutput": {
+        "status": "failed",
+        "meeting_id": 128,
+        "lead_updated": false,
+        "error_type": "lead_not_found",
+        "retryable": false
+      },
+      "expectedBehavior": {
+        "should_not_retry": true,
+        "should_log_error": true,
+        "error_severity": "error"
+      }
+    },
+    {
+      "name": "Rate Limit Error with Retry",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 129,
+          "lead_id": 462,
+          "meeting_outcome": "qualified",
+          "notes": "Excellent meeting",
+          "completed_at": "2024-01-15T21:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 462,
+          "crm_id": "CRM-LEAD-794",
+          "name": "Rate Limited User",
+          "company": "Busy Corp"
+        },
+        "creatio_update_response": {
+          "success": false,
+          "error": "Rate limit exceeded - too many requests",
+          "status_code": 429
+        }
+      },
+      "expectedBehavior": {
+        "should_retry": true,
+        "error_type": "rate_limit",
+        "retryable": true,
+        "should_use_exponential_backoff": true
+      }
+    },
+    {
+      "name": "Invalid Meeting Data",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": null,
+          "lead_id": "invalid",
+          "meeting_outcome": "invalid_outcome",
+          "completed_at": "invalid_date"
+        }
+      },
+      "expectedBehavior": {
+        "should_throw_validation_error": true,
+        "error_messages": [
+          "Missing meeting_id in webhook data",
+          "Invalid meeting_id format",
+          "Invalid meeting_outcome: invalid_outcome"
+        ]
+      }
+    },
+    {
+      "name": "Large Meeting Notes",
+      "mockData": {
+        "meeting_completion_webhook": {
+          "meeting_id": 130,
+          "lead_id": 463,
+          "meeting_outcome": "qualified",
+          "notes": "Very long meeting notes that exceed typical length... [truncated for test - imagine 5000+ characters of detailed meeting notes]",
+          "summary": "Comprehensive meeting with detailed technical discussions",
+          "action_items": [
+            {
+              "description": "Prepare detailed technical proposal with architecture diagrams",
+              "assignee": "Solutions Architect",
+              "due_date": "2024-01-25",
+              "priority": "High"
+            },
+            {
+              "description": "Schedule technical deep-dive session with their engineering team",
+              "assignee": "Technical Sales",
+              "due_date": "2024-01-22",
+              "priority": "High"
+            },
+            {
+              "description": "Provide security compliance documentation",
+              "assignee": "Security Team",
+              "due_date": "2024-01-20",
+              "priority": "Medium"
+            }
+          ],
+          "meeting_duration": 90,
+          "completed_at": "2024-01-15T22:00:00Z"
+        },
+        "django_lead_response": {
+          "id": 463,
+          "crm_id": "CRM-LEAD-795",
+          "name": "Enterprise Lead",
+          "company": "Large Enterprise Inc"
+        },
+        "creatio_update_response": {
+          "success": true,
+          "id": "CRM-LEAD-795"
+        }
+      },
+      "expectedBehavior": {
+        "should_handle_large_notes": true,
+        "should_format_notes_properly": true,
+        "should_create_multiple_tasks": true,
+        "should_preserve_task_priorities": true
+      }
+    }
+  ],
+  "environment_variables": {
+    "DJANGO_API_URL": "https://test-django.example.com",
+    "CREATIO_API_URL": "https://test-creatio.example.com/api",
+    "NOTIFICATION_WEBHOOK_URL": "https://test-notifications.example.com/webhook"
+  },
+  "credentials_required": [
+    {
+      "type": "httpHeaderAuth",
+      "name": "Django API Key",
+      "description": "API key for Django backend authentication"
+    },
+    {
+      "type": "creatioOAuth2",
+      "name": "Creatio OAuth2",
+      "description": "OAuth2 credentials for Creatio CRM API"
+    }
+  ],
+  "webhook_configuration": {
+    "path": "meeting-completed",
+    "method": "POST",
+    "expected_headers": {
+      "Content-Type": "application/json",
+      "X-Workflow-Source": "meeting-management"
+    }
+  },
+  "performance_expectations": {
+    "max_execution_time": "60s",
+    "max_memory_usage": "512MB",
+    "expected_api_calls": {
+      "django_lead_fetch": 1,
+      "creatio_lead_update": 1,
+      "creatio_task_creation": "variable",
+      "django_sync_status_update": 1,
+      "notification_webhook": 1
+    }
+  },
+  "data_validation": {
+    "required_fields": [
+      "meeting_id",
+      "lead_id",
+      "meeting_outcome",
+      "completed_at"
+    ],
+    "valid_meeting_outcomes": [
+      "successful",
+      "no_show",
+      "rescheduled",
+      "cancelled",
+      "qualified",
+      "not_qualified"
+    ],
+    "crm_field_mappings": {
+      "Status": "meeting_outcome",
+      "Notes": "formatted_notes",
+      "LastContactDate": "completed_at",
+      "NextFollowUpDate": "calculated_follow_up_date",
+      "MeetingOutcome": "meeting_outcome",
+      "MeetingDuration": "meeting_duration"
+    }
+  },
+  "error_scenarios": [
+    {
+      "name": "Creatio API Timeout",
+      "trigger": "timeout_after_30s",
+      "expected_behavior": "retry_with_exponential_backoff"
+    },
+    {
+      "name": "Invalid CRM Response",
+      "trigger": "malformed_json_response",
+      "expected_behavior": "treat_as_error_and_log"
+    },
+    {
+      "name": "Task Creation Partial Failure",
+      "trigger": "some_tasks_fail_creation",
+      "expected_behavior": "continue_with_successful_tasks"
+    },
+    {
+      "name": "Django Sync Status Update Failure",
+      "trigger": "django_api_unavailable",
+      "expected_behavior": "log_warning_continue_workflow"
+    }
+  ],
+  "integration_tests": [
+    {
+      "name": "Complete Success Flow",
+      "steps": [
+        "Send meeting completion webhook",
+        "Verify lead data fetch from Django",
+        "Verify CRM lead update",
+        "Verify follow-up task creation",
+        "Verify sync status update",
+        "Verify success notification"
+      ]
+    },
+    {
+      "name": "Error Recovery Flow",
+      "steps": [
+        "Send meeting completion webhook",
+        "Simulate CRM update failure",
+        "Verify retry logic execution",
+        "Verify error logging",
+        "Verify error notification"
+      ]
+    },
+    {
+      "name": "Partial Success Flow",
+      "steps": [
+        "Send meeting completion webhook",
+        "Verify lead update success",
+        "Simulate task creation failure",
+        "Verify graceful handling",
+        "Verify partial success notification"
+      ]
+    }
+  ]
+}

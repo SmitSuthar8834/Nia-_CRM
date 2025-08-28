@@ -1,0 +1,487 @@
+{
+  "name": "AI Assistant Workflow Test",
+  "description": "Test configuration for AI assistant workflow with AI service mocks and error scenarios",
+  "testCases": [
+    {
+      "name": "Successful AI Session Initialization",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 123,
+          "lead_context": {
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "company": "Example Corp",
+            "phone": "+1234567890",
+            "status": "qualified",
+            "source": "creatio",
+            "industry": "Technology",
+            "company_size": "50-100 employees"
+          },
+          "meeting_title": "Sales Discovery Call with Example Corp",
+          "start_time": "2024-01-15T14:00:00Z",
+          "attendees": [
+            {
+              "email": "john.doe@example.com",
+              "displayName": "John Doe"
+            },
+            {
+              "email": "sales@ourcompany.com",
+              "displayName": "Sales Rep"
+            }
+          ],
+          "user_id": "user-456"
+        },
+        "django_ai_initialize_response": {
+          "success": true,
+          "session": {
+            "session_id": "ai-session-789",
+            "meeting_id": 123,
+            "lead_context": {
+              "name": "John Doe",
+              "email": "john.doe@example.com",
+              "company": "Example Corp",
+              "phone": "+1234567890",
+              "status": "qualified",
+              "source": "creatio",
+              "industry": "Technology",
+              "company_size": "50-100 employees"
+            },
+            "is_active": true,
+            "created_at": "2024-01-15T13:55:00Z"
+          },
+          "ai_available": true
+        }
+      },
+      "expectedOutput": {
+        "session_id": "ai-session-789",
+        "meeting_id": 123,
+        "ai_available": true,
+        "status": "active",
+        "initial_questions": [
+          "How has Example Corp been performing recently?",
+          "What are the main challenges John Doe is facing?",
+          "What goals is Example Corp hoping to achieve?"
+        ]
+      },
+      "expectedBehavior": {
+        "should_send_success_notification": true,
+        "notification_type": "ai_session_started",
+        "webhook_response_status": "success"
+      }
+    },
+    {
+      "name": "AI Service Unavailable - Graceful Degradation",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 124,
+          "lead_context": {
+            "name": "Jane Smith",
+            "email": "jane.smith@testcorp.com",
+            "company": "Test Corp",
+            "status": "new"
+          },
+          "meeting_title": "Initial Consultation",
+          "start_time": "2024-01-15T15:00:00Z",
+          "user_id": "user-456"
+        },
+        "django_ai_initialize_response": {
+          "success": true,
+          "session": {
+            "session_id": "fallback-session-790",
+            "meeting_id": 124,
+            "lead_context": {
+              "name": "Jane Smith",
+              "email": "jane.smith@testcorp.com",
+              "company": "Test Corp",
+              "status": "new"
+            },
+            "is_active": true,
+            "created_at": "2024-01-15T14:55:00Z"
+          },
+          "ai_available": false
+        }
+      },
+      "expectedOutput": {
+        "session_id": "fallback-session-790",
+        "meeting_id": 124,
+        "ai_available": false,
+        "status": "active",
+        "initial_questions": [
+          "How has Test Corp been performing recently?",
+          "What are the main challenges Jane Smith is facing?",
+          "What goals is Test Corp hoping to achieve?"
+        ]
+      },
+      "expectedBehavior": {
+        "should_send_success_notification": true,
+        "notification_type": "ai_session_started",
+        "webhook_response_status": "success"
+      }
+    },
+    {
+      "name": "Meeting Not Found Error",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 999,
+          "lead_context": {},
+          "meeting_title": "Non-existent Meeting",
+          "start_time": "2024-01-15T16:00:00Z"
+        },
+        "django_ai_initialize_response": {
+          "success": false,
+          "error": "Meeting with ID 999 not found"
+        }
+      },
+      "expectedOutput": {
+        "session_id": "fallback_999_*",
+        "meeting_id": 999,
+        "ai_available": false,
+        "status": "fallback",
+        "error_type": "meeting_not_found",
+        "fallback_available": false,
+        "initial_questions": []
+      },
+      "expectedBehavior": {
+        "should_log_error": true,
+        "should_send_error_notification": true,
+        "notification_type": "ai_session_error",
+        "webhook_response_status": "failed",
+        "should_not_retry": true
+      }
+    },
+    {
+      "name": "AI Service Error with Fallback",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 125,
+          "lead_context": {
+            "name": "Bob Johnson",
+            "company": "Johnson Industries"
+          },
+          "meeting_title": "Product Demo",
+          "start_time": "2024-01-15T17:00:00Z"
+        },
+        "django_ai_initialize_response": {
+          "success": false,
+          "error": "Gemini AI service temporarily unavailable"
+        }
+      },
+      "expectedOutput": {
+        "session_id": "fallback_125_*",
+        "meeting_id": 125,
+        "ai_available": false,
+        "status": "fallback",
+        "error_type": "ai_service_error",
+        "fallback_available": true,
+        "initial_questions": [
+          "How has your business been performing this quarter?",
+          "What are your main challenges right now?",
+          "What goals are you hoping to achieve?",
+          "How did you hear about our solution?"
+        ]
+      },
+      "expectedBehavior": {
+        "should_log_error": true,
+        "should_send_error_notification": true,
+        "notification_type": "ai_session_error",
+        "webhook_response_status": "degraded",
+        "error_severity": "warning"
+      }
+    },
+    {
+      "name": "Network Error with Retry Logic",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 126,
+          "lead_context": {
+            "name": "Alice Brown",
+            "company": "Brown & Associates"
+          },
+          "meeting_title": "Strategy Session",
+          "start_time": "2024-01-15T18:00:00Z"
+        },
+        "django_ai_initialize_response": {
+          "success": false,
+          "error": "Connection timeout - network error"
+        }
+      },
+      "expectedBehavior": {
+        "should_retry": true,
+        "max_retries": 2,
+        "backoff_strategy": "exponential",
+        "backoff_delays": [2000, 4000],
+        "should_log_error": true,
+        "error_type": "network_error"
+      },
+      "retryScenarios": [
+        {
+          "attempt": 1,
+          "response": {
+            "success": false,
+            "error": "Connection timeout - network error"
+          }
+        },
+        {
+          "attempt": 2,
+          "response": {
+            "success": true,
+            "session": {
+              "session_id": "retry-success-791",
+              "meeting_id": 126,
+              "lead_context": {
+                "name": "Alice Brown",
+                "company": "Brown & Associates"
+              },
+              "is_active": true,
+              "created_at": "2024-01-15T17:55:00Z"
+            },
+            "ai_available": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication Error",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 127,
+          "lead_context": {
+            "name": "Charlie Wilson"
+          },
+          "meeting_title": "Follow-up Call",
+          "start_time": "2024-01-15T19:00:00Z"
+        },
+        "django_ai_initialize_response": {
+          "success": false,
+          "error": "Authentication failed - invalid API key"
+        }
+      },
+      "expectedOutput": {
+        "session_id": "fallback_127_*",
+        "meeting_id": 127,
+        "ai_available": false,
+        "status": "fallback",
+        "error_type": "auth_error",
+        "fallback_available": false
+      },
+      "expectedBehavior": {
+        "should_log_error": true,
+        "should_send_error_notification": true,
+        "webhook_response_status": "failed",
+        "error_severity": "error",
+        "should_not_retry": true
+      }
+    },
+    {
+      "name": "Invalid Webhook Data",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": null,
+          "lead_context": "invalid_format",
+          "meeting_title": "",
+          "start_time": "invalid_date"
+        }
+      },
+      "expectedBehavior": {
+        "should_throw_error": true,
+        "error_message": "Missing meeting_id in webhook data"
+      }
+    },
+    {
+      "name": "Minimal Valid Data",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 128
+        },
+        "django_ai_initialize_response": {
+          "success": true,
+          "session": {
+            "session_id": "minimal-session-792",
+            "meeting_id": 128,
+            "lead_context": {},
+            "is_active": true,
+            "created_at": "2024-01-15T19:55:00Z"
+          },
+          "ai_available": true
+        }
+      },
+      "expectedOutput": {
+        "session_id": "minimal-session-792",
+        "meeting_id": 128,
+        "ai_available": true,
+        "status": "active",
+        "initial_questions": []
+      },
+      "expectedBehavior": {
+        "should_send_success_notification": true,
+        "webhook_response_status": "success"
+      }
+    },
+    {
+      "name": "Large Lead Context Data",
+      "mockData": {
+        "meeting_start_webhook": {
+          "meeting_id": 129,
+          "lead_context": {
+            "name": "Enterprise Client",
+            "email": "contact@enterprise.com",
+            "company": "Enterprise Solutions Inc",
+            "phone": "+1555000000",
+            "status": "qualified",
+            "source": "creatio",
+            "industry": "Enterprise Software",
+            "company_size": "1000+ employees",
+            "annual_revenue": "$100M+",
+            "decision_makers": ["CTO", "VP Engineering", "Head of Operations"],
+            "current_solutions": ["Legacy System A", "Custom Solution B"],
+            "pain_points": ["Scalability issues", "Integration challenges", "High maintenance costs"],
+            "budget_range": "$500K-$1M",
+            "timeline": "Q2 2024",
+            "previous_interactions": [
+              {
+                "date": "2024-01-01",
+                "type": "email",
+                "summary": "Initial inquiry"
+              },
+              {
+                "date": "2024-01-05",
+                "type": "call",
+                "summary": "Requirements discussion"
+              }
+            ]
+          },
+          "meeting_title": "Enterprise Solution Architecture Review",
+          "start_time": "2024-01-15T20:00:00Z",
+          "attendees": [
+            {
+              "email": "contact@enterprise.com",
+              "displayName": "Enterprise Client"
+            },
+            {
+              "email": "cto@enterprise.com",
+              "displayName": "CTO"
+            },
+            {
+              "email": "solutions@ourcompany.com",
+              "displayName": "Solutions Architect"
+            }
+          ]
+        },
+        "django_ai_initialize_response": {
+          "success": true,
+          "session": {
+            "session_id": "enterprise-session-793",
+            "meeting_id": 129,
+            "lead_context": {
+              "name": "Enterprise Client",
+              "email": "contact@enterprise.com",
+              "company": "Enterprise Solutions Inc",
+              "industry": "Enterprise Software",
+              "company_size": "1000+ employees"
+            },
+            "is_active": true,
+            "created_at": "2024-01-15T19:55:00Z"
+          },
+          "ai_available": true
+        }
+      },
+      "expectedOutput": {
+        "session_id": "enterprise-session-793",
+        "meeting_id": 129,
+        "ai_available": true,
+        "status": "active",
+        "initial_questions": [
+          "How has Enterprise Solutions Inc been performing recently?",
+          "What are the main challenges Enterprise Client is facing?",
+          "What goals is Enterprise Solutions Inc hoping to achieve?"
+        ]
+      },
+      "expectedBehavior": {
+        "should_handle_large_context": true,
+        "should_send_success_notification": true,
+        "webhook_response_status": "success"
+      }
+    }
+  ],
+  "environment_variables": {
+    "DJANGO_API_URL": "https://test-django.example.com",
+    "NOTIFICATION_WEBHOOK_URL": "https://test-notifications.example.com/webhook"
+  },
+  "credentials_required": [
+    {
+      "type": "httpHeaderAuth",
+      "name": "Django API Key",
+      "description": "API key for Django backend authentication"
+    }
+  ],
+  "webhook_configuration": {
+    "path": "meeting-started",
+    "method": "POST",
+    "expected_headers": {
+      "Content-Type": "application/json",
+      "X-Workflow-Source": "meeting-management"
+    }
+  },
+  "performance_expectations": {
+    "max_execution_time": "30s",
+    "max_memory_usage": "256MB",
+    "expected_api_calls": {
+      "django_ai_initialize": 1,
+      "notification_webhook": 1,
+      "error_logging": "conditional"
+    }
+  },
+  "error_scenarios": [
+    {
+      "name": "Django API Timeout",
+      "trigger": "timeout_after_15s",
+      "expected_behavior": "retry_with_backoff"
+    },
+    {
+      "name": "Invalid JSON Response",
+      "trigger": "malformed_json",
+      "expected_behavior": "treat_as_error"
+    },
+    {
+      "name": "HTTP 500 Error",
+      "trigger": "server_error",
+      "expected_behavior": "retry_then_fallback"
+    },
+    {
+      "name": "HTTP 404 Error",
+      "trigger": "not_found",
+      "expected_behavior": "no_retry_log_error"
+    }
+  ],
+  "integration_tests": [
+    {
+      "name": "End-to-End Success Flow",
+      "steps": [
+        "Send meeting start webhook",
+        "Verify AI session initialization call",
+        "Verify success notification sent",
+        "Verify webhook response format"
+      ]
+    },
+    {
+      "name": "Error Recovery Flow",
+      "steps": [
+        "Send meeting start webhook",
+        "Simulate AI service error",
+        "Verify fallback session creation",
+        "Verify error notification sent",
+        "Verify graceful degradation response"
+      ]
+    },
+    {
+      "name": "Retry Logic Flow",
+      "steps": [
+        "Send meeting start webhook",
+        "Simulate network error",
+        "Verify retry attempt with backoff",
+        "Simulate success on retry",
+        "Verify final success response"
+      ]
+    }
+  ]
+}

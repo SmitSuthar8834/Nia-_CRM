@@ -1,0 +1,145 @@
+{
+  "name": "Lead Sync Workflow Test",
+  "description": "Test configuration for lead sync workflow with mock data",
+  "testCases": [
+    {
+      "name": "Successful Lead Sync",
+      "mockData": {
+        "creatio_response": {
+          "value": [
+            {
+              "Id": "test-lead-1",
+              "Name": "John Doe",
+              "Email": "john.doe@example.com",
+              "Account": {
+                "Name": "Example Corp",
+                "Id": "account-1"
+              },
+              "MobilePhone": "+1234567890",
+              "QualifyStatus": {
+                "Name": "qualified"
+              },
+              "CreatedOn": "2024-01-01T10:00:00Z",
+              "ModifiedOn": "2024-01-01T10:30:00Z"
+            },
+            {
+              "Id": "test-lead-2",
+              "Name": "Jane Smith",
+              "Email": "jane.smith@testcorp.com",
+              "Account": {
+                "Name": "Test Corp",
+                "Id": "account-2"
+              },
+              "MobilePhone": "+0987654321",
+              "QualifyStatus": {
+                "Name": "new"
+              },
+              "CreatedOn": "2024-01-01T11:00:00Z",
+              "ModifiedOn": "2024-01-01T11:15:00Z"
+            }
+          ]
+        }
+      },
+      "expectedOutput": {
+        "transformed_leads": [
+          {
+            "crm_id": "test-lead-1",
+            "name": "John Doe",
+            "email": "john.doe@example.com",
+            "company": "Example Corp",
+            "phone": "+1234567890",
+            "status": "qualified",
+            "source": "creatio"
+          },
+          {
+            "crm_id": "test-lead-2",
+            "name": "Jane Smith",
+            "email": "jane.smith@testcorp.com",
+            "company": "Test Corp",
+            "phone": "+0987654321",
+            "status": "new",
+            "source": "creatio"
+          }
+        ]
+      }
+    },
+    {
+      "name": "API Error Handling",
+      "mockData": {
+        "creatio_response": {
+          "error": {
+            "code": "500",
+            "message": "Internal Server Error"
+          }
+        }
+      },
+      "expectedBehavior": {
+        "should_retry": true,
+        "max_retries": 5,
+        "backoff_strategy": "exponential",
+        "error_logging": true
+      }
+    },
+    {
+      "name": "Empty Response Handling",
+      "mockData": {
+        "creatio_response": {
+          "value": []
+        }
+      },
+      "expectedOutput": {
+        "transformed_leads": [],
+        "status": "success",
+        "message": "No new leads to sync"
+      }
+    },
+    {
+      "name": "Partial Data Handling",
+      "mockData": {
+        "creatio_response": {
+          "value": [
+            {
+              "Id": "test-lead-3",
+              "Name": "Incomplete Lead",
+              "Email": null,
+              "Account": null,
+              "MobilePhone": "",
+              "QualifyStatus": null,
+              "CreatedOn": "2024-01-01T12:00:00Z",
+              "ModifiedOn": "2024-01-01T12:00:00Z"
+            }
+          ]
+        }
+      },
+      "expectedOutput": {
+        "transformed_leads": [
+          {
+            "crm_id": "test-lead-3",
+            "name": "Incomplete Lead",
+            "email": "",
+            "company": "",
+            "phone": "",
+            "status": "new",
+            "source": "creatio"
+          }
+        ]
+      }
+    }
+  ],
+  "environment_variables": {
+    "CREATIO_API_URL": "https://test-creatio.example.com",
+    "DJANGO_API_URL": "https://test-django.example.com"
+  },
+  "credentials_required": [
+    {
+      "type": "oAuth2Api",
+      "name": "Creatio OAuth2",
+      "description": "OAuth2 credentials for Creatio API access"
+    },
+    {
+      "type": "httpHeaderAuth",
+      "name": "Django API Key",
+      "description": "API key for Django backend authentication"
+    }
+  ]
+}
