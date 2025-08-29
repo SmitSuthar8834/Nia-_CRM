@@ -1,0 +1,151 @@
+{
+  "name": "Notification and Task Creation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-summary-notification",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Meeting Summary Notification Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "meeting-summary-notification"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate meeting summary notification data\nconst webhookData = $input.first().json;\n\nif (!webhookData.meeting_id) {\n  throw new Error('Missing meeting_id in webhook data');\n}\n\nif (!webhookData.meeting_summary) {\n  throw new Error('Missing meeting_summary in webhook data');\n}\n\nconst notificationData = {\n  meeting_id: webhookData.meeting_id,\n  meeting_summary: webhookData.meeting_summary,\n  meeting_outcome: webhookData.meeting_outcome || 'completed',\n  attendees: webhookData.attendees || [],\n  action_items: webhookData.action_items || [],\n  next_steps: webhookData.next_steps || [],\n  meeting_date: webhookData.meeting_date,\n  meeting_duration: webhookData.meeting_duration || 0,\n  lead_data: webhookData.lead_data || {},\n  sales_rep: webhookData.sales_rep || {},\n  notification_channels: webhookData.notification_channels || ['slack'],\n  create_tasks: webhookData.create_tasks || false,\n  schedule_follow_up: webhookData.schedule_follow_up || false,\n  follow_up_date: webhookData.follow_up_date || null,\n  completed_at: webhookData.completed_at || new Date().toISOString()\n};\n\nreturn [{ json: notificationData }];"
+      },
+      "id": "extract-notification-data",
+      "name": "Extract Notification Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"channel\": \"#sales-updates\",\n  \"username\": \"NIA Meeting Assistant\",\n  \"text\": \"Meeting Summary: {{$json.lead_data.name}} ({{$json.lead_data.company}})\",\n  \"attachments\": [\n    {\n      \"color\": \"good\",\n      \"title\": \"{{$json.meeting_outcome}} Meeting\",\n      \"text\": \"{{$json.meeting_summary}}\",\n      \"fields\": [\n        {\n          \"title\": \"Sales Rep\",\n          \"value\": \"{{$json.sales_rep.name}}\",\n          \"short\": true\n        },\n        {\n          \"title\": \"Duration\",\n          \"value\": \"{{$json.meeting_duration}} minutes\",\n          \"short\": true\n        }\n      ]\n    }\n  ]\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "send-slack-notification",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 200],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{$env.TEAMS_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"@type\": \"MessageCard\",\n  \"@context\": \"http://schema.org/extensions\",\n  \"themeColor\": \"00FF00\",\n  \"summary\": \"Meeting Summary: {{$json.lead_data.name}} ({{$json.lead_data.company}})\",\n  \"sections\": [\n    {\n      \"activityTitle\": \"Meeting Summary: {{$json.lead_data.name}} ({{$json.lead_data.company}})\",\n      \"activitySubtitle\": \"Sales Rep: {{$json.sales_rep.name}} | Outcome: {{$json.meeting_outcome}}\",\n      \"text\": \"{{$json.meeting_summary}}\"\n    }\n  ]\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "send-teams-notification",
+      "name": "Send Teams Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 400],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"meeting_id\": {{$json.meeting_id}},\n  \"notifications_sent\": {{JSON.stringify($json.notification_channels)}},\n  \"message\": \"Notification workflow completed successfully\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Meeting Summary Notification Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Notification Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Notification Data": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Teams Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Teams Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "notification-task-creation",
+      "name": "notification-task-creation"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

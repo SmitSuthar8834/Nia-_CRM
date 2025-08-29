@@ -1,0 +1,566 @@
+{
+  "name": "Follow-up Email Automation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "validation-completed",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Validation Completion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "validation-completed-email"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and validate validation completion data\nconst webhookData = $input.first().json;\n\n// Validate required fields\nif (!webhookData.validation_session_id) {\n  throw new Error('Missing validation_session_id in webhook data');\n}\n\nif (!webhookData.meeting_outcome) {\n  throw new Error('Missing meeting_outcome in webhook data');\n}\n\n// Extract validation data\nconst validationData = {\n  validation_session_id: webhookData.validation_session_id,\n  meeting_id: webhookData.meeting_id,\n  meeting_outcome: webhookData.meeting_outcome,\n  validated_summary: webhookData.validated_summary || '',\n  action_items: webhookData.action_items || [],\n  next_steps: webhookData.next_steps || [],\n  attendees: webhookData.attendees || [],\n  meeting_date: webhookData.meeting_date,\n  meeting_duration: webhookData.meeting_duration || 0,\n  sales_rep_email: webhookData.sales_rep_email,\n  lead_data: webhookData.lead_data || {},\n  crm_updates_approved: webhookData.crm_updates_approved || false,\n  follow_up_required: webhookData.follow_up_required || false,\n  completed_at: webhookData.completed_at || new Date().toISOString()\n};\n\n// Validate meeting_outcome\nconst validOutcomes = ['successful', 'qualified', 'not_qualified', 'demo_scheduled', 'proposal_requested', 'follow_up_needed', 'closed_won', 'closed_lost'];\nif (!validOutcomes.includes(validationData.meeting_outcome)) {\n  throw new Error(`Invalid meeting_outcome: ${validationData.meeting_outcome}`);\n}\n\n// Validate sales rep email\nif (!validationData.sales_rep_email || !validationData.sales_rep_email.includes('@')) {\n  throw new Error('Invalid or missing sales_rep_email');\n}\n\nconsole.log(`Processing follow-up email for validation session ${validationData.validation_session_id} with outcome: ${validationData.meeting_outcome}`);\n\nreturn [{\n  json: validationData\n}];"
+      },
+      "id": "extract-validation-data",
+      "name": "Extract Validation Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate email template based on meeting outcome\nconst validationData = $input.first().json;\nconst { meeting_outcome, validated_summary, action_items, next_steps, attendees, lead_data, meeting_date } = validationData;\n\n// Helper function to format date\nconst formatDate = (dateString) => {\n  const date = new Date(dateString);\n  return date.toLocaleDateString('en-US', { \n    weekday: 'long', \n    year: 'numeric', \n    month: 'long', \n    day: 'numeric' \n  });\n};\n\n// Helper function to format action items\nconst formatActionItems = (items) => {\n  if (!items || items.length === 0) return '';\n  \n  return items.map((item, index) => {\n    let formatted = `${index + 1}. ${item.description}`;\n    if (item.due_date) {\n      formatted += ` (Due: ${formatDate(item.due_date)})`;\n    }\n    if (item.assignee && item.assignee !== 'Sales Rep') {\n      formatted += ` - Assigned to: ${item.assignee}`;\n    }\n    return formatted;\n  }).join('\\n');\n};\n\n// Helper function to format next steps\nconst formatNextSteps = (steps) => {\n  if (!steps || steps.length === 0) return '';\n  \n  return steps.map((step, index) => `${index + 1}. ${step}`).join('\\n');\n};\n\n// Generate email templates based on outcome\nconst generateEmailTemplate = (outcome) => {\n  const leadName = lead_data.name || 'there';\n  const leadCompany = lead_data.company || 'your organization';\n  const meetingDateFormatted = formatDate(meeting_date);\n  const actionItemsFormatted = formatActionItems(action_items);\n  const nextStepsFormatted = formatNextSteps(next_steps);\n  \n  const templates = {\n    'successful': {\n      subject: `Thank you for our meeting - Next steps with ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nThank you for taking the time to meet with me on ${meetingDateFormatted}. I enjoyed our conversation and learning more about ${leadCompany}'s goals and challenges.\\n\\n**Meeting Summary:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Action Items:**\\n${actionItemsFormatted}\\n\\n` : ''}${nextStepsFormatted ? `**Next Steps:**\\n${nextStepsFormatted}\\n\\n` : ''}I'm excited about the opportunity to work together and help ${leadCompany} achieve its objectives. Please don't hesitate to reach out if you have any questions or need clarification on anything we discussed.\\n\\nLooking forward to our continued conversation.\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'high',\n      send_timing: 'immediate'\n    },\n    'qualified': {\n      subject: `Great meeting today - Let's move forward with ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nIt was fantastic meeting with you today! Based on our conversation, I believe we have a great opportunity to help ${leadCompany} achieve its goals.\\n\\n**What we discussed:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Immediate action items:**\\n${actionItemsFormatted}\\n\\n` : ''}${nextStepsFormatted ? `**Our next steps:**\\n${nextStepsFormatted}\\n\\n` : ''}I'm confident that our solution can address the challenges you mentioned, and I'm excited to show you exactly how we can help ${leadCompany} succeed.\\n\\nI'll be in touch soon with the information we discussed. In the meantime, please feel free to reach out with any questions.\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'high',\n      send_timing: 'immediate'\n    },\n    'demo_scheduled': {\n      subject: `Demo scheduled - Looking forward to showing you our solution`,\n      body: `Hi ${leadName},\\n\\nThank you for our productive meeting on ${meetingDateFormatted}. I'm excited that we've scheduled a demo to show you how our solution can benefit ${leadCompany}.\\n\\n**Meeting recap:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Before our demo:**\\n${actionItemsFormatted}\\n\\n` : ''}**Demo preparation:**\\nTo make our demo as relevant as possible, I'll be preparing examples that directly relate to the use cases we discussed. This will help you see exactly how our solution addresses ${leadCompany}'s specific needs.\\n\\n${nextStepsFormatted ? `**Next steps:**\\n${nextStepsFormatted}\\n\\n` : ''}I'm looking forward to our demo and showing you the value we can bring to ${leadCompany}.\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'high',\n      send_timing: 'immediate'\n    },\n    'proposal_requested': {\n      subject: `Proposal coming your way - ${leadCompany} partnership opportunity`,\n      body: `Hi ${leadName},\\n\\nThank you for our excellent meeting on ${meetingDateFormatted}. I'm excited to prepare a customized proposal for ${leadCompany} based on everything we discussed.\\n\\n**Meeting summary:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Information I'm gathering for your proposal:**\\n${actionItemsFormatted}\\n\\n` : ''}**Proposal timeline:**\\nI'll have a comprehensive proposal ready for you within the next few business days. This will include detailed pricing, implementation timeline, and specific solutions for the challenges we discussed.\\n\\n${nextStepsFormatted ? `**Next steps:**\\n${nextStepsFormatted}\\n\\n` : ''}I'm confident that our proposal will demonstrate significant value for ${leadCompany}. I'll be in touch soon with the complete details.\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'high',\n      send_timing: 'immediate'\n    },\n    'follow_up_needed': {\n      subject: `Following up on our conversation - ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nThank you for taking the time to meet with me on ${meetingDateFormatted}. I wanted to follow up on our conversation about ${leadCompany}'s needs and objectives.\\n\\n**What we discussed:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Items to address:**\\n${actionItemsFormatted}\\n\\n` : ''}${nextStepsFormatted ? `**Suggested next steps:**\\n${nextStepsFormatted}\\n\\n` : ''}I'd love to continue our conversation and explore how we might be able to help ${leadCompany}. Would you be available for a brief follow-up call next week?\\n\\nPlease let me know what works best for your schedule.\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'medium',\n      send_timing: 'delayed_24h'\n    },\n    'not_qualified': {\n      subject: `Thank you for your time - Staying connected with ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nThank you for taking the time to meet with me on ${meetingDateFormatted}. I appreciated learning more about ${leadCompany} and your current priorities.\\n\\n**Meeting summary:**\\n${validated_summary}\\n\\nWhile it sounds like our solution isn't the right fit for ${leadCompany} at this time, I'd love to stay connected. Business needs evolve, and I'd be happy to reconnect in the future if circumstances change.\\n\\n${nextStepsFormatted ? `**For future reference:**\\n${nextStepsFormatted}\\n\\n` : ''}Please don't hesitate to reach out if you have any questions or if there's anything else I can help with down the road.\\n\\nWishing you and ${leadCompany} continued success!\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'low',\n      send_timing: 'delayed_24h'\n    },\n    'closed_won': {\n      subject: `Welcome to the family! Next steps for ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nCongratulations! I'm thrilled that ${leadCompany} has decided to move forward with our solution. Welcome to the family!\\n\\n**Meeting recap:**\\n${validated_summary}\\n\\n${actionItemsFormatted ? `**Immediate next steps:**\\n${actionItemsFormatted}\\n\\n` : ''}**What happens next:**\\nOur implementation team will be in touch within 24 hours to begin the onboarding process. They'll work closely with you to ensure a smooth transition and quick time-to-value.\\n\\n${nextStepsFormatted ? `**Implementation roadmap:**\\n${nextStepsFormatted}\\n\\n` : ''}Thank you for choosing us as your partner. I'm excited to see the results we'll achieve together!\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'urgent',\n      send_timing: 'immediate'\n    },\n    'closed_lost': {\n      subject: `Thank you for considering us - ${leadCompany}`,\n      body: `Hi ${leadName},\\n\\nThank you for taking the time to meet with me on ${meetingDateFormatted} and for considering our solution for ${leadCompany}.\\n\\n**Meeting summary:**\\n${validated_summary}\\n\\nWhile I'm disappointed that we won't be working together at this time, I completely understand your decision. I hope the solution you've chosen serves ${leadCompany} well.\\n\\nI'd love to stay connected and would welcome the opportunity to work together in the future should your needs change.\\n\\nWishing you and ${leadCompany} all the best!\\n\\nBest regards,\\n[Sales Rep Name]`,\n      priority: 'low',\n      send_timing: 'delayed_24h'\n    }\n  };\n  \n  return templates[outcome] || templates['follow_up_needed'];\n};\n\n// Generate the email template\nconst emailTemplate = generateEmailTemplate(meeting_outcome);\n\n// Determine if email should be sent automatically or require approval\nconst requiresApproval = ['closed_won', 'proposal_requested', 'demo_scheduled'].includes(meeting_outcome);\n\nconst emailData = {\n  template: emailTemplate,\n  recipient: {\n    email: lead_data.email || '',\n    name: lead_data.name || '',\n    company: lead_data.company || ''\n  },\n  sender: {\n    email: validationData.sales_rep_email,\n    name: '[Sales Rep Name]' // Will be replaced with actual name from user profile\n  },\n  requires_approval: requiresApproval,\n  send_timing: emailTemplate.send_timing,\n  priority: emailTemplate.priority,\n  meeting_context: {\n    meeting_id: validationData.meeting_id,\n    validation_session_id: validationData.validation_session_id,\n    outcome: meeting_outcome,\n    date: meeting_date\n  }\n};\n\nconsole.log(`Generated ${meeting_outcome} email template for ${lead_data.name || 'lead'} - Approval required: ${requiresApproval}`);\n\nreturn [{\n  json: {\n    ...validationData,\n    email_data: emailData\n  }\n}];"
+      },
+      "id": "generate-email-template",
+      "name": "Generate Email Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "requires-approval",
+              "leftValue": "={{$json.email_data.requires_approval}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-approval-required",
+      "name": "Check Approval Required",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/email-approvals/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"validation_session_id\": {{$json.validation_session_id}},\n  \"meeting_id\": {{$json.meeting_id}},\n  \"email_template\": {\n    \"subject\": \"{{$json.email_data.template.subject}}\",\n    \"body\": \"{{$json.email_data.template.body}}\",\n    \"priority\": \"{{$json.email_data.priority}}\"\n  },\n  \"recipient\": {\n    \"email\": \"{{$json.email_data.recipient.email}}\",\n    \"name\": \"{{$json.email_data.recipient.name}}\",\n    \"company\": \"{{$json.email_data.recipient.company}}\"\n  },\n  \"sender_email\": \"{{$json.email_data.sender.email}}\",\n  \"meeting_outcome\": \"{{$json.meeting_outcome}}\",\n  \"status\": \"pending_approval\",\n  \"created_at\": \"{{new Date().toISOString()}}\",\n  \"expires_at\": \"{{new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "create-approval-request",
+      "name": "Create Approval Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"email_approval_required\",\n  \"approval_id\": {{$json.id}},\n  \"sales_rep_email\": \"{{$('Extract Validation Data').item.json.sales_rep_email}}\",\n  \"recipient_name\": \"{{$('Generate Email Template').item.json.email_data.recipient.name}}\",\n  \"recipient_company\": \"{{$('Generate Email Template').item.json.email_data.recipient.company}}\",\n  \"email_subject\": \"{{$('Generate Email Template').item.json.email_data.template.subject}}\",\n  \"meeting_outcome\": \"{{$('Extract Validation Data').item.json.meeting_outcome}}\",\n  \"priority\": \"{{$('Generate Email Template').item.json.email_data.priority}}\",\n  \"expires_at\": \"{{new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()}}\",\n  \"approval_url\": \"{{$env.FRONTEND_URL}}/email-approvals/{{$json.id}}\",\n  \"message\": \"Email approval required for follow-up to {{$('Generate Email Template').item.json.email_data.recipient.name}} ({{$('Generate Email Template').item.json.email_data.recipient.company}}) - {{$('Generate Email Template').item.json.email_data.template.subject}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-approval-notification",
+      "name": "Send Approval Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-recipient-email",
+              "leftValue": "={{$json.email_data.recipient.email}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "send-timing-check",
+              "leftValue": "={{$json.email_data.send_timing}}",
+              "rightValue": "immediate",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-send-conditions",
+      "name": "Check Send Conditions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare email for immediate sending\nconst emailData = $input.first().json.email_data;\nconst validationData = $input.first().json;\n\n// Replace placeholder with actual sales rep name (would come from user profile in real implementation)\nconst salesRepName = 'Sales Representative'; // In real implementation, fetch from user profile\n\nconst emailPayload = {\n  to: emailData.recipient.email,\n  subject: emailData.template.subject,\n  body: emailData.template.body.replace(/\\[Sales Rep Name\\]/g, salesRepName),\n  priority: emailData.priority,\n  sender_email: emailData.sender.email,\n  sender_name: salesRepName,\n  meeting_context: emailData.meeting_context,\n  send_immediately: true\n};\n\nconsole.log(`Preparing immediate email send to ${emailData.recipient.email}`);\n\nreturn [{\n  json: {\n    ...validationData,\n    email_payload: emailPayload\n  }\n}];"
+      },
+      "id": "prepare-immediate-send",
+      "name": "Prepare Immediate Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Schedule delayed email sending\nconst emailData = $input.first().json.email_data;\nconst validationData = $input.first().json;\n\n// Calculate delay based on send_timing\nconst getDelayHours = (timing) => {\n  switch (timing) {\n    case 'delayed_24h': return 24;\n    case 'delayed_48h': return 48;\n    case 'delayed_1week': return 168;\n    default: return 24;\n  }\n};\n\nconst delayHours = getDelayHours(emailData.send_timing);\nconst scheduledTime = new Date(Date.now() + delayHours * 60 * 60 * 1000);\n\nconst scheduledEmailData = {\n  validation_session_id: validationData.validation_session_id,\n  meeting_id: validationData.meeting_id,\n  recipient_email: emailData.recipient.email,\n  recipient_name: emailData.recipient.name,\n  email_subject: emailData.template.subject,\n  email_body: emailData.template.body,\n  sender_email: emailData.sender.email,\n  priority: emailData.priority,\n  scheduled_time: scheduledTime.toISOString(),\n  delay_hours: delayHours,\n  meeting_outcome: validationData.meeting_outcome,\n  status: 'scheduled'\n};\n\nconsole.log(`Scheduling email for ${scheduledTime.toISOString()} (${delayHours}h delay)`);\n\nreturn [{\n  json: {\n    ...validationData,\n    scheduled_email: scheduledEmailData\n  }\n}];"
+      },
+      "id": "schedule-delayed-send",
+      "name": "Schedule Delayed Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.EMAIL_SERVICE_URL}}/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify($json.email_payload)}}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "send-email-immediately",
+      "name": "Send Email Immediately",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 350],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/scheduled-emails/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify($json.scheduled_email)}}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "create-scheduled-email",
+      "name": "Create Scheduled Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 450]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "email-sent-successfully",
+              "leftValue": "={{$json.status}}",
+              "rightValue": "sent",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-email-send-success",
+      "name": "Check Email Send Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 350]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/email-logs/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"validation_session_id\": {{$('Extract Validation Data').item.json.validation_session_id}},\n  \"meeting_id\": {{$('Extract Validation Data').item.json.meeting_id}},\n  \"recipient_email\": \"{{$('Prepare Immediate Send').item.json.email_payload.to}}\",\n  \"subject\": \"{{$('Prepare Immediate Send').item.json.email_payload.subject}}\",\n  \"status\": \"sent\",\n  \"sent_at\": \"{{new Date().toISOString()}}\",\n  \"email_service_id\": \"{{$json.email_id || ''}}\",\n  \"meeting_outcome\": \"{{$('Extract Validation Data').item.json.meeting_outcome}}\",\n  \"priority\": \"{{$('Prepare Immediate Send').item.json.email_payload.priority}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 2,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "log-email-success",
+      "name": "Log Email Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle email sending failure\nconst errorResponse = $input.first().json;\nconst emailData = $('Prepare Immediate Send').first().json;\n\n// Determine error type and create error details\nlet errorType = 'unknown_error';\nlet errorMessage = 'Email sending failed';\nlet retryable = true;\n\nif (errorResponse.error) {\n  errorMessage = errorResponse.error;\n  \n  // Categorize error types\n  if (errorMessage.includes('invalid email') || errorMessage.includes('bounce')) {\n    errorType = 'invalid_recipient';\n    retryable = false;\n  } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {\n    errorType = 'rate_limit';\n    retryable = true;\n  } else if (errorMessage.includes('timeout') || errorMessage.includes('connection')) {\n    errorType = 'network_error';\n    retryable = true;\n  } else if (errorMessage.includes('authentication') || errorMessage.includes('unauthorized')) {\n    errorType = 'auth_error';\n    retryable = false;\n  }\n}\n\nconst errorDetails = {\n  error_type: errorType,\n  error_message: errorMessage,\n  retryable: retryable,\n  validation_session_id: emailData.validation_session_id,\n  recipient_email: emailData.email_payload.to,\n  failed_at: new Date().toISOString()\n};\n\nconsole.error(`Email sending failed for validation session ${emailData.validation_session_id}: ${errorMessage}`);\n\nreturn [{\n  json: {\n    ...emailData,\n    error_details: errorDetails\n  }\n}];"
+      },
+      "id": "handle-email-error",
+      "name": "Handle Email Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.DJANGO_API_URL}}/api/email-logs/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"validation_session_id\": {{$json.validation_session_id}},\n  \"meeting_id\": {{$json.meeting_id}},\n  \"recipient_email\": \"{{$json.email_payload.to}}\",\n  \"subject\": \"{{$json.email_payload.subject}}\",\n  \"status\": \"failed\",\n  \"error_type\": \"{{$json.error_details.error_type}}\",\n  \"error_message\": \"{{$json.error_details.error_message}}\",\n  \"failed_at\": \"{{$json.error_details.failed_at}}\",\n  \"retryable\": {{$json.error_details.retryable}},\n  \"meeting_outcome\": \"{{$json.meeting_outcome}}\"\n}",
+        "options": {
+          "retry": {
+            "enabled": true,
+            "maxTries": 2,
+            "waitBetweenTries": 1000
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "log-email-failure",
+      "name": "Log Email Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"email_sent_success\",\n  \"validation_session_id\": {{$('Extract Validation Data').item.json.validation_session_id}},\n  \"recipient_email\": \"{{$('Prepare Immediate Send').item.json.email_payload.to}}\",\n  \"recipient_name\": \"{{$('Generate Email Template').item.json.email_data.recipient.name}}\",\n  \"email_subject\": \"{{$('Prepare Immediate Send').item.json.email_payload.subject}}\",\n  \"meeting_outcome\": \"{{$('Extract Validation Data').item.json.meeting_outcome}}\",\n  \"sent_at\": \"{{new Date().toISOString()}}\",\n  \"message\": \"Follow-up email successfully sent to {{$('Generate Email Template').item.json.email_data.recipient.name}} - {{$('Prepare Immediate Send').item.json.email_payload.subject}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-success-notification",
+      "name": "Send Success Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.NOTIFICATION_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"email_send_failed\",\n  \"validation_session_id\": {{$json.validation_session_id}},\n  \"recipient_email\": \"{{$json.email_payload.to}}\",\n  \"error_type\": \"{{$json.error_details.error_type}}\",\n  \"error_message\": \"{{$json.error_details.error_message}}\",\n  \"retryable\": {{$json.error_details.retryable}},\n  \"meeting_outcome\": \"{{$json.meeting_outcome}}\",\n  \"severity\": \"{{$json.error_details.retryable ? 'warning' : 'error'}}\",\n  \"message\": \"Failed to send follow-up email to {{$json.email_payload.to}}: {{$json.error_details.error_message}}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "send-error-notification",
+      "name": "Send Error Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"success\",\n  \"validation_session_id\": {{$('Extract Validation Data').item.json.validation_session_id}},\n  \"email_action\": \"{{$('Check Approval Required').item.json ? 'approval_requested' : ($('Check Send Conditions').item.json ? 'sent_immediately' : 'scheduled')}}\",\n  \"approval_required\": {{$('Check Approval Required').item.json || false}},\n  \"email_sent\": {{$('Check Email Send Success').item.json || false}},\n  \"scheduled\": {{$('Create Scheduled Email').item.json ? true : false}},\n  \"recipient\": \"{{$('Generate Email Template').item.json.email_data.recipient.email}}\",\n  \"meeting_outcome\": \"{{$('Extract Validation Data').item.json.meeting_outcome}}\",\n  \"message\": \"Follow-up email workflow completed successfully\"\n}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 375]
+    }
+  ],
+  "connections": {
+    "Validation Completion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Validation Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Validation Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Email Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Email Template": {
+      "main": [
+        [
+          {
+            "node": "Check Approval Required",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Approval Required": {
+      "main": [
+        [
+          {
+            "node": "Create Approval Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Send Conditions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Approval Request": {
+      "main": [
+        [
+          {
+            "node": "Send Approval Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Send Conditions": {
+      "main": [
+        [
+          {
+            "node": "Prepare Immediate Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule Delayed Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Immediate Send": {
+      "main": [
+        [
+          {
+            "node": "Send Email Immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Delayed Send": {
+      "main": [
+        [
+          {
+            "node": "Create Scheduled Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Immediately": {
+      "main": [
+        [
+          {
+            "node": "Check Email Send Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Email Send Success": {
+      "main": [
+        [
+          {
+            "node": "Log Email Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Email Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Email Success": {
+      "main": [
+        [
+          {
+            "node": "Send Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Email Error": {
+      "main": [
+        [
+          {
+            "node": "Log Email Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Email Failure": {
+      "main": [
+        [
+          {
+            "node": "Send Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Approval Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Scheduled Email": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "follow-up-email",
+      "name": "follow-up-email"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

@@ -84,4 +84,22 @@ urlpatterns = [
     path('validation-sessions/<int:validation_session_id>/opportunity-suggestions/', views.get_opportunity_sync_suggestions, name='get-opportunity-sync-suggestions'),
     path('validation-sessions/<int:validation_session_id>/bulk-sync/', views.bulk_sync_validation_session, name='bulk-sync-validation-session'),
     path('opportunities/<str:opportunity_id>/details/', views.get_opportunity_details, name='get-opportunity-details'),
+    
+    # Email Management endpoints
+    path('draft-emails/', views.create_draft_email, name='create-draft-email'),
+    path('draft-emails/list/', views.list_draft_emails, name='list-draft-emails'),
+    path('draft-emails/<int:email_id>/', views.get_draft_email, name='get-draft-email'),
+    path('draft-emails/<int:email_id>/update/', views.update_draft_email, name='update-draft-email'),
+    path('draft-emails/<int:email_id>/delete/', views.delete_draft_email, name='delete-draft-email'),
+    
+    # Email Approval endpoints
+    path('email-approvals/request/', views.request_email_approval, name='request-email-approval'),
+    path('email-approvals/respond/', views.respond_to_email_approval, name='respond-to-email-approval'),
+    path('email-approvals/list/', views.list_email_approvals, name='list-email-approvals'),
+    
+    # Scheduled Email endpoints
+    path('scheduled-emails/', views.schedule_email, name='schedule-email'),
+    path('scheduled-emails/list/', views.list_scheduled_emails, name='list-scheduled-emails'),
+    path('scheduled-emails/<int:email_id>/cancel/', views.cancel_scheduled_email, name='cancel-scheduled-email'),
+    path('scheduled-emails/<int:email_id>/send/', views.send_email_immediately, name='send-email-immediately'),
 ]
