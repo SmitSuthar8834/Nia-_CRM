@@ -1,0 +1,134 @@
+# Production Docker Compose configuration
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # Override web service for production
+  web:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.production
+    volumes:
+      # Remove source code volume in production
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - logs_volume:/app/logs
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8000 
+                      --workers 4 
+                      --worker-class gevent 
+                      --worker-connections 1000 
+                      --timeout 120 
+                      --keepalive 5 
+                      --max-requests 1000 
+                      --max-requests-jitter 100 
+                      --access-logfile /app/logs/gunicorn-access.log 
+                      --error-logfile /app/logs/gunicorn-error.log 
+                      --log-level info 
+                      intelligent_meeting_workflow.wsgi:application"
+
+  # Override celery for production
+  celery:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.production
+    volumes:
+      - logs_volume:/app/logs
+    command: >
+      celery -A intelligent_meeting_workflow worker 
+             -l info 
+             --concurrency=4 
+             --max-tasks-per-child=1000 
+             --logfile=/app/logs/celery-worker.log
+
+  # Override celery-beat for production
+  celery-beat:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.production
+    volumes:
+      - logs_volume:/app/logs
+    command: >
+      celery -A intelligent_meeting_workflow beat 
+             -l info 
+             --scheduler django_celery_beat.schedulers:DatabaseScheduler 
+             --logfile=/app/logs/celery-beat.log
+
+  # Enable nginx for production
+  nginx:
+    profiles: []  # Remove profile to enable by default
+
+  # Production database with optimized settings
+  db:
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-intelligent_meeting_workflow}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+
+  # Production Redis with persistence
+  redis:
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+
+  # Monitoring with Prometheus (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+
+  # Grafana for metrics visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    profiles:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
