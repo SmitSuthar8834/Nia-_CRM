@@ -400,3 +400,328 @@ class LoginAttempt(models.Model):
         
         # Block after 5 failed attempts
         return recent_failures >= 5
+
+
+class ConsentRecord(models.Model):
+    """
+    Track user consent for data processing and recording
+    """
+    CONSENT_TYPE_CHOICES = [
+        ('call_recording', 'Call Recording'),
+        ('transcription', 'Transcription Processing'),
+        ('ai_analysis', 'AI Analysis'),
+        ('data_storage', 'Data Storage'),
+        ('analytics', 'Analytics Processing'),
+        ('marketing', 'Marketing Communications'),
+        ('third_party_sharing', 'Third Party Data Sharing'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('granted', 'Granted'),
+        ('denied', 'Denied'),
+        ('withdrawn', 'Withdrawn'),
+        ('expired', 'Expired'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='consent_records')
+    
+    # Consent Details
+    consent_type = models.CharField(max_length=50, choices=CONSENT_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='granted')
+    
+    # Legal Basis
+    legal_basis = models.CharField(max_length=100, blank=True, null=True)
+    purpose = models.TextField(help_text="Purpose for which consent is granted")
+    
+    # Consent Metadata
+    granted_at = models.DateTimeField(auto_now_add=True)
+    withdrawn_at = models.DateTimeField(blank=True, null=True)
+    expires_at = models.DateTimeField(blank=True, null=True)
+    
+    # Technical Details
+    ip_address = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.TextField(blank=True, null=True)
+    consent_method = models.CharField(max_length=50, default='web_form')
+    
+    # Audit Trail
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'consent_records'
+        unique_together = ['user', 'consent_type']
+        indexes = [
+            models.Index(fields=['user', 'consent_type']),
+            models.Index(fields=['status', 'expires_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.consent_type} - {self.status}"
+
+    @property
+    def is_active(self):
+        """Check if consent is currently active"""
+        if self.status != 'granted':
+            return False
+        
+        if self.expires_at and timezone.now() > self.expires_at:
+            return False
+        
+        return True
+
+    def withdraw_consent(self):
+        """Withdraw consent"""
+        self.status = 'withdrawn'
+        self.withdrawn_at = timezone.now()
+        self.save()
+
+    def renew_consent(self, expires_at=None):
+        """Renew consent"""
+        self.status = 'granted'
+        self.withdrawn_at = None
+        self.expires_at = expires_at
+        self.save()
+
+
+class DataRetentionPolicy(models.Model):
+    """
+    Define data retention policies for different data types
+    """
+    DATA_TYPE_CHOICES = [
+        ('meeting_transcripts', 'Meeting Transcripts'),
+        ('call_recordings', 'Call Recordings'),
+        ('user_profiles', 'User Profiles'),
+        ('login_attempts', 'Login Attempts'),
+        ('activity_logs', 'Activity Logs'),
+        ('consent_records', 'Consent Records'),
+        ('crm_sync_data', 'CRM Sync Data'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Policy Details
+    data_type = models.CharField(max_length=50, choices=DATA_TYPE_CHOICES, unique=True)
+    retention_period_days = models.IntegerField(help_text="Number of days to retain data")
+    
+    # Policy Rules
+    auto_delete_enabled = models.BooleanField(default=True)
+    archive_before_delete = models.BooleanField(default=True)
+    require_user_consent = models.BooleanField(default=False)
+    
+    # Legal Requirements
+    legal_basis = models.CharField(max_length=200, blank=True, null=True)
+    regulatory_requirement = models.CharField(max_length=200, blank=True, null=True)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    class Meta:
+        db_table = 'data_retention_policies'
+        indexes = [
+            models.Index(fields=['data_type']),
+            models.Index(fields=['auto_delete_enabled']),
+        ]
+
+    def __str__(self):
+        return f"{self.data_type} - {self.retention_period_days} days"
+
+    @property
+    def retention_period_timedelta(self):
+        """Get retention period as timedelta"""
+        return timedelta(days=self.retention_period_days)
+
+    def is_data_expired(self, data_created_at):
+        """Check if data is expired based on this policy"""
+        if not data_created_at:
+            return False
+        
+        expiry_date = data_created_at + self.retention_period_timedelta
+        return timezone.now() > expiry_date
+
+
+class DataDeletionRequest(models.Model):
+    """
+    Track data deletion requests (GDPR Right to be Forgotten)
+    """
+    REQUEST_TYPE_CHOICES = [
+        ('user_initiated', 'User Initiated'),
+        ('admin_initiated', 'Admin Initiated'),
+        ('automated', 'Automated Retention Policy'),
+        ('legal_request', 'Legal Request'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Request Details
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deletion_requests')
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    
+    # Scope of Deletion
+    data_types = models.JSONField(default=list, help_text="List of data types to delete")
+    include_backups = models.BooleanField(default=True)
+    include_logs = models.BooleanField(default=False)
+    
+    # Processing Details
+    requested_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    
+    # Results
+    deleted_records_count = models.JSONField(default=dict, help_text="Count of deleted records by type")
+    error_message = models.TextField(blank=True, null=True)
+    
+    # Legal/Audit
+    legal_basis = models.CharField(max_length=200, blank=True, null=True)
+    retention_override = models.BooleanField(default=False, help_text="Override retention policies")
+    
+    # Metadata
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='initiated_deletions')
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_deletions')
+    
+    class Meta:
+        db_table = 'data_deletion_requests'
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['request_type', 'status']),
+            models.Index(fields=['requested_at']),
+        ]
+
+    def __str__(self):
+        return f"Deletion request for {self.user.username} - {self.status}"
+
+    def start_processing(self, processor_user):
+        """Start processing the deletion request"""
+        self.status = 'in_progress'
+        self.started_at = timezone.now()
+        self.processed_by = processor_user
+        self.save()
+
+    def mark_completed(self, deleted_counts):
+        """Mark deletion request as completed"""
+        self.status = 'completed'
+        self.completed_at = timezone.now()
+        self.deleted_records_count = deleted_counts
+        self.save()
+
+    def mark_failed(self, error_message):
+        """Mark deletion request as failed"""
+        self.status = 'failed'
+        self.error_message = error_message
+        self.save()
+
+
+class EncryptedDataField(models.Model):
+    """
+    Store encrypted sensitive data with metadata
+    """
+    FIELD_TYPE_CHOICES = [
+        ('transcript', 'Meeting Transcript'),
+        ('pii', 'Personally Identifiable Information'),
+        ('financial', 'Financial Information'),
+        ('health', 'Health Information'),
+        ('biometric', 'Biometric Data'),
+        ('other', 'Other Sensitive Data'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Data Classification
+    field_type = models.CharField(max_length=20, choices=FIELD_TYPE_CHOICES)
+    sensitivity_level = models.IntegerField(default=1, help_text="1=Low, 2=Medium, 3=High, 4=Critical")
+    
+    # Encrypted Data
+    encrypted_data = models.TextField()
+    data_hash = models.CharField(max_length=64, blank=True, null=True, help_text="Hash for searching")
+    
+    # Encryption Metadata
+    encryption_algorithm = models.CharField(max_length=50, default='Fernet')
+    key_version = models.CharField(max_length=10, default='1.0')
+    encrypted_at = models.DateTimeField(auto_now_add=True)
+    
+    # Access Control
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='encrypted_data')
+    access_level = models.CharField(max_length=20, default='owner_only')
+    
+    # Audit Trail
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_accessed = models.DateTimeField(blank=True, null=True)
+    access_count = models.IntegerField(default=0)
+    
+    class Meta:
+        db_table = 'encrypted_data_fields'
+        indexes = [
+            models.Index(fields=['owner', 'field_type']),
+            models.Index(fields=['sensitivity_level']),
+            models.Index(fields=['data_hash']),
+        ]
+
+    def __str__(self):
+        return f"{self.field_type} data for {self.owner.username}"
+
+    def record_access(self):
+        """Record data access for audit trail"""
+        self.last_accessed = timezone.now()
+        self.access_count += 1
+        self.save(update_fields=['last_accessed', 'access_count'])
+
+    @property
+    def is_high_sensitivity(self):
+        """Check if data is high sensitivity"""
+        return self.sensitivity_level >= 3
+
+
+class PrivacySettings(models.Model):
+    """
+    User privacy settings and preferences
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='privacy_settings')
+    
+    # Data Processing Preferences
+    allow_ai_analysis = models.BooleanField(default=True)
+    allow_transcript_storage = models.BooleanField(default=True)
+    allow_analytics_processing = models.BooleanField(default=True)
+    allow_third_party_integrations = models.BooleanField(default=True)
+    
+    # Data Sharing Preferences
+    share_anonymized_data = models.BooleanField(default=False)
+    share_with_team_members = models.BooleanField(default=True)
+    share_with_managers = models.BooleanField(default=True)
+    
+    # Retention Preferences
+    auto_delete_transcripts = models.BooleanField(default=False)
+    transcript_retention_days = models.IntegerField(default=2555, help_text="Days to keep transcripts")
+    
+    # Communication Preferences
+    privacy_policy_updates = models.BooleanField(default=True)
+    data_breach_notifications = models.BooleanField(default=True)
+    consent_renewal_reminders = models.BooleanField(default=True)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'privacy_settings'
+
+    def __str__(self):
+        return f"Privacy settings for {self.user.username}"
+
+    def get_effective_retention_days(self):
+        """Get effective retention period considering user preferences and policies"""
+        if self.auto_delete_transcripts:
+            return min(self.transcript_retention_days, 
+                      getattr(settings, 'MAX_USER_RETENTION_DAYS', 2555))
+        return getattr(settings, 'DEFAULT_RETENTION_DAYS', 2555)

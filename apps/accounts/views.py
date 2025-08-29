@@ -19,7 +19,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExampl
 from drf_spectacular.types import OpenApiTypes
 
 from .models import UserProfile, TwoFactorAuth, LoginAttempt, CalendarIntegration, UserActivity
-from .authentication import JWTTokenGenerator, authenticate_user
+from .authentication import JWTTokenGenerator, authenticate_user, SessionManager
 from .permissions import (
     AdminOnlyPermission, 
     ManagerOrAdminPermission,
@@ -152,7 +152,7 @@ class LoginView(APIView):
             }, status=status.HTTP_429_TOO_MANY_REQUESTS)
         
         # Authenticate user
-        auth_result = authenticate_user(username, password)
+        auth_result = authenticate_user(username, password, request)
         if not auth_result:
             LoginAttempt.objects.create(
                 username=username,
@@ -309,7 +309,7 @@ class RefreshTokenView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            access_token = JWTTokenGenerator.refresh_access_token(refresh_token)
+            access_token = JWTTokenGenerator.refresh_access_token(refresh_token, request)
             return Response({
                 'access_token': access_token
             })
@@ -775,6 +775,352 @@ def notification_settings(request):
         return Response({
             'message': 'Notification settings updated successfully'
         })
+
+
+class ChangePasswordView(APIView):
+    """
+    Change user password with enhanced security
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        tags=['Authentication'],
+        summary='Change Password',
+        description='Change the current user\'s password with security validation.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'current_password': {'type': 'string', 'description': 'Current password'},
+                    'new_password': {'type': 'string', 'description': 'New password'},
+                    'confirm_password': {'type': 'string', 'description': 'Confirm new password'}
+                },
+                'required': ['current_password', 'new_password', 'confirm_password'],
+                'example': {
+                    'current_password': 'oldpassword123',
+                    'new_password': 'NewSecurePass123!',
+                    'confirm_password': 'NewSecurePass123!'
+                }
+            }
+        },
+        responses={
+            200: {
+                'description': 'Password changed successfully',
+                'examples': [
+                    OpenApiExample(
+                        'Success Response',
+                        value={'message': 'Password changed successfully'}
+                    )
+                ]
+            },
+            400: {
+                'description': 'Validation error',
+                'examples': [
+                    OpenApiExample(
+                        'Password Mismatch',
+                        value={'error': 'New passwords do not match'}
+                    ),
+                    OpenApiExample(
+                        'Weak Password',
+                        value={'error': 'Password does not meet security requirements'}
+                    )
+                ]
+            },
+            401: {
+                'description': 'Current password incorrect',
+                'examples': [
+                    OpenApiExample(
+                        'Wrong Password',
+                        value={'error': 'Current password is incorrect'}
+                    )
+                ]
+            }
+        }
+    )
+    def post(self, request):
+        current_password = request.data.get('current_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+        
+        if not all([current_password, new_password, confirm_password]):
+            return Response({
+                'error': 'All password fields are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify current password
+        if not request.user.check_password(current_password):
+            return Response({
+                'error': 'Current password is incorrect'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Check new passwords match
+        if new_password != confirm_password:
+            return Response({
+                'error': 'New passwords do not match'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate new password
+        from django.contrib.auth.password_validation import validate_password
+        try:
+            validate_password(new_password, request.user)
+        except ValidationError as e:
+            return Response({
+                'error': list(e.messages)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Change password
+        request.user.set_password(new_password)
+        request.user.save()
+        
+        # Revoke all existing tokens for security
+        JWTTokenGenerator.revoke_all_user_tokens(request.user)
+        SessionManager.revoke_all_sessions(request.user)
+        
+        # Log activity
+        UserActivity.objects.create(
+            user=request.user,
+            activity_type='settings_change',
+            description='Password changed',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({
+            'message': 'Password changed successfully. Please log in again.'
+        })
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+
+class ActiveSessionsView(APIView):
+    """
+    Manage active user sessions
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        tags=['Authentication'],
+        summary='Get Active Sessions',
+        description='Get all active sessions for the current user.',
+        responses={
+            200: {
+                'description': 'Active sessions retrieved',
+                'examples': [
+                    OpenApiExample(
+                        'Sessions List',
+                        value={
+                            'sessions': [
+                                {
+                                    'session_id': 'abc123...',
+                                    'ip_address': '192.168.1.100',
+                                    'user_agent': 'Mozilla/5.0...',
+                                    'created_at': '2024-01-01T10:00:00Z',
+                                    'last_activity': '2024-01-01T11:30:00Z',
+                                    'is_current': True
+                                }
+                            ]
+                        }
+                    )
+                ]
+            }
+        }
+    )
+    def get(self, request):
+        sessions = SessionManager.get_active_sessions(request.user)
+        current_ip = self.get_client_ip(request)
+        
+        # Mark current session
+        for session in sessions:
+            session['is_current'] = session.get('ip_address') == current_ip
+        
+        return Response({
+            'sessions': sessions
+        })
+    
+    @extend_schema(
+        tags=['Authentication'],
+        summary='Revoke Session',
+        description='Revoke a specific session.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'session_id': {'type': 'string', 'description': 'Session ID to revoke'}
+                },
+                'required': ['session_id']
+            }
+        },
+        responses={
+            200: {
+                'description': 'Session revoked successfully'
+            },
+            400: {
+                'description': 'Invalid session ID'
+            }
+        }
+    )
+    def delete(self, request):
+        session_id = request.data.get('session_id')
+        
+        if not session_id:
+            return Response({
+                'error': 'Session ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        SessionManager.revoke_session(session_id)
+        
+        # Log activity
+        UserActivity.objects.create(
+            user=request.user,
+            activity_type='settings_change',
+            description=f'Session {session_id[:8]}... revoked',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({
+            'message': 'Session revoked successfully'
+        })
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+
+class SecuritySettingsView(APIView):
+    """
+    Manage user security settings
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        tags=['Authentication'],
+        summary='Get Security Settings',
+        description='Get current user\'s security settings and status.',
+        responses={
+            200: {
+                'description': 'Security settings retrieved',
+                'examples': [
+                    OpenApiExample(
+                        'Security Status',
+                        value={
+                            'two_factor_enabled': True,
+                            'password_last_changed': '2024-01-01T10:00:00Z',
+                            'active_sessions_count': 2,
+                            'recent_login_attempts': 1,
+                            'account_locked': False,
+                            'security_score': 85
+                        }
+                    )
+                ]
+            }
+        }
+    )
+    def get(self, request):
+        user = request.user
+        
+        # Get 2FA status
+        two_factor = getattr(user, 'two_factor', None)
+        two_factor_enabled = two_factor.is_enabled if two_factor else False
+        
+        # Get active sessions count
+        active_sessions = SessionManager.get_active_sessions(user)
+        
+        # Get recent login attempts
+        recent_attempts = LoginAttempt.objects.filter(
+            user=user,
+            created_at__gte=timezone.now() - timedelta(days=7)
+        ).count()
+        
+        # Calculate security score
+        security_score = self._calculate_security_score(user, two_factor_enabled, len(active_sessions))
+        
+        return Response({
+            'two_factor_enabled': two_factor_enabled,
+            'password_last_changed': user.date_joined.isoformat(),  # Placeholder
+            'active_sessions_count': len(active_sessions),
+            'recent_login_attempts': recent_attempts,
+            'account_locked': False,  # Placeholder
+            'security_score': security_score
+        })
+    
+    def _calculate_security_score(self, user, two_factor_enabled, active_sessions_count):
+        """
+        Calculate a security score for the user
+        """
+        score = 50  # Base score
+        
+        # 2FA adds 30 points
+        if two_factor_enabled:
+            score += 30
+        
+        # Strong password adds 20 points (placeholder logic)
+        if len(user.password) > 60:  # Hashed password length indicates complexity
+            score += 20
+        
+        # Recent activity (not too many sessions) adds points
+        if 1 <= active_sessions_count <= 3:
+            score += 10
+        elif active_sessions_count > 5:
+            score -= 10
+        
+        return min(100, max(0, score))
+
+
+class RevokeAllTokensView(APIView):
+    """
+    Revoke all tokens for security purposes
+    """
+    permission_classes = [IsAuthenticated]
+    
+    @extend_schema(
+        tags=['Authentication'],
+        summary='Revoke All Tokens',
+        description='Revoke all tokens and sessions for the current user. Useful for security incidents.',
+        responses={
+            200: {
+                'description': 'All tokens revoked successfully'
+            }
+        }
+    )
+    def post(self, request):
+        # Revoke all tokens and sessions
+        JWTTokenGenerator.revoke_all_user_tokens(request.user)
+        SessionManager.revoke_all_sessions(request.user)
+        
+        # Log activity
+        UserActivity.objects.create(
+            user=request.user,
+            activity_type='settings_change',
+            description='All tokens and sessions revoked',
+            ip_address=self.get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+        
+        return Response({
+            'message': 'All tokens and sessions have been revoked. Please log in again.'
+        })
+    
+    def get_client_ip(self, request):
+        """Get client IP address"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
 
 
 @api_view(['POST'])

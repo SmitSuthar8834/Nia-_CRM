@@ -2361,8 +2361,7 @@ def get_opportunity_details(request, opportunity_id):
             'details': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-#
- Email Management Endpoints
+# Email Management Endpoints
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

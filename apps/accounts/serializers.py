@@ -3,7 +3,10 @@ Serializers for User Account and Authentication
 """
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile, TwoFactorAuth, CalendarIntegration, UserActivity, LoginAttempt
+from .models import (
+    UserProfile, TwoFactorAuth, CalendarIntegration, UserActivity, LoginAttempt,
+    ConsentRecord, PrivacySettings, DataRetentionPolicy, DataDeletionRequest, EncryptedDataField
+)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -216,3 +219,97 @@ class CalendarConnectionSerializer(serializers.Serializer):
     access_token = serializers.CharField()
     refresh_token = serializers.CharField(required=False, allow_blank=True)
     token_expires_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class ConsentRecordSerializer(serializers.ModelSerializer):
+    """
+    Consent record serializer
+    """
+    is_active = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = ConsentRecord
+        fields = [
+            'id', 'consent_type', 'status', 'purpose', 'granted_at',
+            'withdrawn_at', 'expires_at', 'is_active', 'created_at'
+        ]
+        read_only_fields = ['id', 'granted_at', 'withdrawn_at', 'created_at', 'is_active']
+
+
+class PrivacySettingsSerializer(serializers.ModelSerializer):
+    """
+    Privacy settings serializer
+    """
+    effective_retention_days = serializers.ReadOnlyField(source='get_effective_retention_days')
+    
+    class Meta:
+        model = PrivacySettings
+        fields = [
+            'id', 'allow_ai_analysis', 'allow_transcript_storage',
+            'allow_analytics_processing', 'allow_third_party_integrations',
+            'share_anonymized_data', 'share_with_team_members',
+            'share_with_managers', 'auto_delete_transcripts',
+            'transcript_retention_days', 'privacy_policy_updates',
+            'data_breach_notifications', 'consent_renewal_reminders',
+            'effective_retention_days', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'effective_retention_days', 'created_at', 'updated_at']
+
+
+class DataRetentionPolicySerializer(serializers.ModelSerializer):
+    """
+    Data retention policy serializer
+    """
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    
+    class Meta:
+        model = DataRetentionPolicy
+        fields = [
+            'id', 'data_type', 'retention_period_days', 'auto_delete_enabled',
+            'archive_before_delete', 'require_user_consent', 'legal_basis',
+            'regulatory_requirement', 'created_at', 'updated_at', 'created_by_username'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_username']
+
+
+class DataDeletionRequestSerializer(serializers.ModelSerializer):
+    """
+    Data deletion request serializer
+    """
+    requested_by_username = serializers.CharField(source='requested_by.username', read_only=True)
+    processed_by_username = serializers.CharField(source='processed_by.username', read_only=True)
+    
+    class Meta:
+        model = DataDeletionRequest
+        fields = [
+            'id', 'request_type', 'status', 'data_types', 'include_backups',
+            'include_logs', 'requested_at', 'started_at', 'completed_at',
+            'deleted_records_count', 'error_message', 'legal_basis',
+            'retention_override', 'requested_by_username', 'processed_by_username'
+        ]
+        read_only_fields = [
+            'id', 'requested_at', 'started_at', 'completed_at',
+            'deleted_records_count', 'error_message', 'requested_by_username',
+            'processed_by_username'
+        ]
+
+
+class EncryptedDataFieldSerializer(serializers.ModelSerializer):
+    """
+    Encrypted data field serializer (metadata only)
+    """
+    owner_username = serializers.CharField(source='owner.username', read_only=True)
+    is_high_sensitivity = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = EncryptedDataField
+        fields = [
+            'id', 'field_type', 'sensitivity_level', 'encryption_algorithm',
+            'key_version', 'encrypted_at', 'owner_username', 'access_level',
+            'created_at', 'last_accessed', 'access_count', 'is_high_sensitivity'
+        ]
+        read_only_fields = [
+            'id', 'encrypted_at', 'owner_username', 'created_at',
+            'last_accessed', 'access_count', 'is_high_sensitivity'
+        ]
+        # Note: encrypted_data is intentionally excluded for security

@@ -198,6 +198,108 @@ class DebriefingAccessPermission(MeetingIntelligencePermission):
         return hasattr(user, 'profile') and user.profile.role == 'sales_rep'
 
 
+class ValidationSessionPermission(MeetingIntelligencePermission):
+    """
+    Permission for validation session access control
+    """
+    
+    def has_permission(self, request, view):
+        """
+        Check if user can access validation sessions
+        """
+        if not super().has_permission(request, view):
+            return False
+        
+        user_profile = request.user.profile
+        
+        # Only sales reps and above can access validation sessions
+        return user_profile.role in ['admin', 'sales_manager', 'sales_rep']
+    
+    def has_object_permission(self, request, view, obj):
+        """
+        Check if user can access specific validation session
+        """
+        user_profile = request.user.profile
+        
+        # Admins can access all validation sessions
+        if user_profile.role == 'admin':
+            return True
+        
+        # Sales managers can access team validation sessions
+        if user_profile.role == 'sales_manager':
+            # Check if validation session belongs to team member
+            if hasattr(obj, 'sales_rep_email'):
+                try:
+                    session_user = User.objects.get(email=obj.sales_rep_email)
+                    return (session_user == request.user or 
+                           self._is_team_member(request.user, session_user))
+                except User.DoesNotExist:
+                    return False
+            return True
+        
+        # Sales reps can only access their own validation sessions
+        if user_profile.role == 'sales_rep':
+            if hasattr(obj, 'sales_rep_email'):
+                return obj.sales_rep_email == request.user.email
+            return False
+        
+        return False
+    
+    def _is_team_member(self, manager, user):
+        """
+        Check if user is a team member of the manager
+        """
+        return hasattr(user, 'profile') and user.profile.role == 'sales_rep'
+
+
+class SecureDataAccessPermission(MeetingIntelligencePermission):
+    """
+    Permission for accessing sensitive data like transcripts
+    """
+    
+    def has_permission(self, request, view):
+        """
+        Check if user can access sensitive data
+        """
+        if not super().has_permission(request, view):
+            return False
+        
+        user_profile = request.user.profile
+        
+        # Check if user has required permissions for sensitive data
+        return user_profile.has_permission('view_transcripts') or user_profile.role in ['admin', 'sales_manager', 'sales_rep']
+    
+    def has_object_permission(self, request, view, obj):
+        """
+        Check if user can access specific sensitive data
+        """
+        user_profile = request.user.profile
+        
+        # Admins can access all data
+        if user_profile.role == 'admin':
+            return True
+        
+        # Check data ownership or team membership
+        if hasattr(obj, 'user') and obj.user == request.user:
+            return True
+        
+        if hasattr(obj, 'meeting') and hasattr(obj.meeting, 'organizer'):
+            if obj.meeting.organizer == request.user:
+                return True
+            
+            # Sales managers can access team data
+            if user_profile.role == 'sales_manager':
+                return self._is_team_member(request.user, obj.meeting.organizer)
+        
+        return False
+    
+    def _is_team_member(self, manager, user):
+        """
+        Check if user is a team member of the manager
+        """
+        return hasattr(user, 'profile') and user.profile.role == 'sales_rep'
+
+
 class CompetitiveIntelligencePermission(MeetingIntelligencePermission):
     """
     Permission for competitive intelligence access

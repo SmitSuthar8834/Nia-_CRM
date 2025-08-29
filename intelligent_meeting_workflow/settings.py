@@ -48,9 +48,11 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
+    'apps.accounts',
     'leads',
     'meetings',
     'ai_assistant',
+    'performance_monitoring',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -221,10 +223,68 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
-# Security Settings
+# Production Security Settings
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=31536000, cast=int)  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=True, cast=bool)
+SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', default=True, cast=bool)
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Session Security
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Strict'
+SESSION_COOKIE_AGE = 3600  # 1 hour
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# CSRF Protection
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Strict'
+CSRF_TRUSTED_ORIGINS = config('CSRF_TRUSTED_ORIGINS', default='', cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+
+# JWT Security Settings
+JWT_ACCESS_TOKEN_LIFETIME_HOURS = config('JWT_ACCESS_TOKEN_LIFETIME_HOURS', default=1, cast=int)
+JWT_REFRESH_TOKEN_LIFETIME_DAYS = config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
+JWT_BIND_IP = config('JWT_BIND_IP', default=False, cast=bool)
+JWT_BIND_USER_AGENT = config('JWT_BIND_USER_AGENT', default=False, cast=bool)
+JWT_ISSUER = config('JWT_ISSUER', default='nia-meeting-intelligence')
+JWT_AUDIENCE = config('JWT_AUDIENCE', default='nia-api')
+
+# Password Security
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 12,
+        }
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+    {
+        'NAME': 'apps.accounts.validators.CustomPasswordValidator',
+    },
+]
+
+# Account Security
+LOGIN_ATTEMPT_LIMIT = config('LOGIN_ATTEMPT_LIMIT', default=5, cast=int)
+LOGIN_ATTEMPT_TIMEOUT = config('LOGIN_ATTEMPT_TIMEOUT', default=900, cast=int)  # 15 minutes
+ACCOUNT_LOCKOUT_DURATION = config('ACCOUNT_LOCKOUT_DURATION', default=1800, cast=int)  # 30 minutes
+
+# Data Retention
+DATA_RETENTION_DAYS = config('DATA_RETENTION_DAYS', default=2555, cast=int)  # 7 years default
+TRANSCRIPT_RETENTION_DAYS = config('TRANSCRIPT_RETENTION_DAYS', default=2555, cast=int)
+LOG_RETENTION_DAYS = config('LOG_RETENTION_DAYS', default=90, cast=int)
 
 # Google Gemini AI Configuration
 GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
