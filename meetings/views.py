@@ -7,14 +7,17 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.http import JsonResponse
 from django.core.exceptions import ValidationError
-from .models import Meeting, MeetingSession, ActionItem, CallBotSession, DraftSummary, ValidationSession
+from .models import Meeting, MeetingSession, ActionItem, CallBotSession, DraftSummary, ValidationSession, DraftEmail, EmailApproval
 from .serializers import (
     MeetingSerializer, MeetingSessionSerializer, 
     ActionItemSerializer, MeetingMatchSerializer,
     CallBotSessionSerializer, DraftSummarySerializer,
     CRMFormattedSummarySerializer, ValidationSessionSerializer,
     ValidationResponseSerializer, ValidationSessionCreateSerializer,
-    ValidationSessionDetailSerializer
+    ValidationSessionDetailSerializer, DraftEmailSerializer,
+    EmailApprovalSerializer, EmailDraftCreateSerializer,
+    EmailApprovalRequestSerializer, EmailApprovalResponseSerializer,
+    ScheduledEmailSerializer
 )
 from .services import MeetingSessionService
 from .crm_service import CRMSyncService, CRMSyncStatus
@@ -2356,4 +2359,460 @@ def get_opportunity_details(request, opportunity_id):
         return Response({
             'error': 'Failed to get opportunity details',
             'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+#
+ Email Management Endpoints
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_draft_email(request):
+    """
+    Create a draft follow-up email based on validation session
+    """
+    try:
+        serializer = EmailDraftCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get validation session
+        validation_session_id = serializer.validated_data['validation_session_id']
+        validation_session = get_object_or_404(ValidationSession, id=validation_session_id)
+        
+        # Generate email content based on meeting outcome
+        from .email_service import EmailDraftService
+        email_service = EmailDraftService()
+        draft_email = email_service.create_draft_email(
+            validation_session=validation_session,
+            email_type=serializer.validated_data['email_type'],
+            recipient_email=serializer.validated_data['recipient_email'],
+            recipient_name=serializer.validated_data.get('recipient_name', ''),
+            cc_emails=serializer.validated_data.get('cc_emails', []),
+            bcc_emails=serializer.validated_data.get('bcc_emails', []),
+            custom_template=serializer.validated_data.get('custom_template', ''),
+            include_meeting_summary=serializer.validated_data.get('include_meeting_summary', True),
+            include_action_items=serializer.validated_data.get('include_action_items', True),
+            include_next_steps=serializer.validated_data.get('include_next_steps', True)
+        )
+        
+        if draft_email:
+            serializer = DraftEmailSerializer(draft_email)
+            return Response({
+                'success': True,
+                'draft_email': serializer.data
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                'error': 'Failed to create draft email'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_draft_emails(request):
+    """
+    List draft emails with optional filtering
+    """
+    try:
+        queryset = DraftEmail.objects.select_related('validation_session').all()
+        
+        # Apply filters
+        status_filter = request.query_params.get('status')
+        email_type_filter = request.query_params.get('email_type')
+        validation_session_id = request.query_params.get('validation_session_id')
+        
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if email_type_filter:
+            queryset = queryset.filter(email_type=email_type_filter)
+        if validation_session_id:
+            queryset = queryset.filter(validation_session_id=validation_session_id)
+        
+        # Order by creation date (newest first)
+        queryset = queryset.order_by('-created_at')
+        
+        serializer = DraftEmailSerializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'draft_emails': serializer.data,
+            'count': queryset.count()
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_draft_email(request, email_id):
+    """
+    Get detailed draft email information
+    """
+    try:
+        draft_email = get_object_or_404(DraftEmail, id=email_id)
+        serializer = DraftEmailSerializer(draft_email)
+        return Response(serializer.data)
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def update_draft_email(request, email_id):
+    """
+    Update draft email content
+    """
+    try:
+        draft_email = get_object_or_404(DraftEmail, id=email_id)
+        
+        # Only allow updates if email is in draft status
+        if draft_email.status not in ['draft', 'rejected']:
+            return Response({
+                'error': 'Cannot update email that is not in draft or rejected status'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = DraftEmailSerializer(draft_email, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                'success': True,
+                'draft_email': serializer.data
+            })
+        else:
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_draft_email(request, email_id):
+    """
+    Delete draft email
+    """
+    try:
+        draft_email = get_object_or_404(DraftEmail, id=email_id)
+        
+        # Only allow deletion if email is in draft status
+        if draft_email.status not in ['draft', 'rejected']:
+            return Response({
+                'error': 'Cannot delete email that is not in draft or rejected status'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        draft_email.delete()
+        return Response({
+            'success': True,
+            'message': 'Draft email deleted successfully'
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def request_email_approval(request):
+    """
+    Request approval for a draft email
+    """
+    try:
+        serializer = EmailApprovalRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get draft email
+        draft_email_id = serializer.validated_data['draft_email_id']
+        draft_email = get_object_or_404(DraftEmail, id=draft_email_id)
+        
+        # Check if email is in draft status
+        if draft_email.status != 'draft':
+            return Response({
+                'error': 'Email must be in draft status to request approval'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create approval request
+        from .email_service import EmailApprovalService
+        email_service = EmailApprovalService()
+        approval = email_service.request_approval(
+            draft_email=draft_email,
+            approver_email=serializer.validated_data['approver_email'],
+            approval_expires_hours=serializer.validated_data.get('approval_expires_hours', 24)
+        )
+        
+        if approval:
+            # Update draft email status
+            draft_email.status = 'pending_approval'
+            draft_email.approval_requested_at = timezone.now()
+            draft_email.save()
+            
+            serializer = EmailApprovalSerializer(approval)
+            return Response({
+                'success': True,
+                'approval': serializer.data,
+                'message': 'Approval request sent successfully'
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response({
+                'error': 'Failed to create approval request'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])  # Public endpoint for email approval links
+def respond_to_email_approval(request):
+    """
+    Respond to email approval request (approve/reject)
+    """
+    try:
+        serializer = EmailApprovalResponseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get approval by token
+        approval_token = serializer.validated_data['approval_token']
+        approval = get_object_or_404(EmailApproval, approval_token=approval_token)
+        
+        # Check if approval is still valid
+        if approval.is_expired:
+            return Response({
+                'error': 'Approval request has expired'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if approval.status != 'pending':
+            return Response({
+                'error': 'Approval request has already been processed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Process approval response
+        from .email_service import EmailApprovalService
+        email_service = EmailApprovalService()
+        result = email_service.process_approval_response(
+            approval=approval,
+            action=serializer.validated_data['action'],
+            rejection_reason=serializer.validated_data.get('rejection_reason', '')
+        )
+        
+        if result:
+            return Response({
+                'success': True,
+                'message': f'Email {serializer.validated_data["action"]}d successfully',
+                'action': serializer.validated_data['action']
+            })
+        else:
+            return Response({
+                'error': 'Failed to process approval response'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_email_approvals(request):
+    """
+    List email approval requests
+    """
+    try:
+        queryset = EmailApproval.objects.select_related('draft_email').all()
+        
+        # Apply filters
+        status_filter = request.query_params.get('status')
+        approver_email = request.query_params.get('approver_email')
+        
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        if approver_email:
+            queryset = queryset.filter(approver_email=approver_email)
+        
+        # Order by creation date (newest first)
+        queryset = queryset.order_by('-created_at')
+        
+        serializer = EmailApprovalSerializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'approvals': serializer.data,
+            'count': queryset.count()
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def schedule_email(request):
+    """
+    Schedule an approved email for future sending
+    """
+    try:
+        serializer = ScheduledEmailSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'error': 'Invalid data',
+                'details': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get draft email
+        draft_email_id = serializer.validated_data['draft_email_id']
+        draft_email = get_object_or_404(DraftEmail, id=draft_email_id)
+        
+        # Check if email is approved
+        if draft_email.status != 'approved':
+            return Response({
+                'error': 'Email must be approved before scheduling'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Schedule email
+        from .email_service import EmailSchedulingService
+        email_service = EmailSchedulingService()
+        result = email_service.schedule_email(
+            draft_email=draft_email,
+            scheduled_send_time=serializer.validated_data['scheduled_send_time']
+        )
+        
+        if result:
+            return Response({
+                'success': True,
+                'message': 'Email scheduled successfully',
+                'scheduled_send_time': serializer.validated_data['scheduled_send_time']
+            })
+        else:
+            return Response({
+                'error': 'Failed to schedule email'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_scheduled_emails(request):
+    """
+    List scheduled emails
+    """
+    try:
+        queryset = DraftEmail.objects.filter(status='scheduled').order_by('scheduled_send_time')
+        
+        # Apply filters
+        email_type_filter = request.query_params.get('email_type')
+        if email_type_filter:
+            queryset = queryset.filter(email_type=email_type_filter)
+        
+        serializer = DraftEmailSerializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'scheduled_emails': serializer.data,
+            'count': queryset.count()
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_scheduled_email(request, email_id):
+    """
+    Cancel a scheduled email
+    """
+    try:
+        draft_email = get_object_or_404(DraftEmail, id=email_id)
+        
+        # Check if email is scheduled
+        if draft_email.status != 'scheduled':
+            return Response({
+                'error': 'Email is not scheduled'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Cancel scheduling
+        draft_email.status = 'approved'
+        draft_email.scheduled_send_time = None
+        draft_email.save()
+        
+        return Response({
+            'success': True,
+            'message': 'Scheduled email cancelled successfully'
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_email_immediately(request, email_id):
+    """
+    Send an approved email immediately
+    """
+    try:
+        draft_email = get_object_or_404(DraftEmail, id=email_id)
+        
+        # Check if email is approved or scheduled
+        if draft_email.status not in ['approved', 'scheduled']:
+            return Response({
+                'error': 'Email must be approved or scheduled before sending'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Send email
+        from .email_service import EmailSendingService
+        email_service = EmailSendingService()
+        result = email_service.send_email(draft_email)
+        
+        if result['success']:
+            return Response({
+                'success': True,
+                'message': 'Email sent successfully'
+            })
+        else:
+            return Response({
+                'error': f'Failed to send email: {result["error"]}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            'error': f'Unexpected error: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

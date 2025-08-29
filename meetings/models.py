@@ -356,3 +356,123 @@ class CRMSyncRecord(models.Model):
     
     def __str__(self):
         return f"CRM sync to {self.crm_system} - {self.sync_status}"
+
+
+class DraftEmail(models.Model):
+    """
+    Draft email model for follow-up emails after meetings
+    """
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('pending_approval', 'Pending Approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('scheduled', 'Scheduled'),
+        ('sent', 'Sent'),
+        ('failed', 'Failed'),
+    ]
+    
+    EMAIL_TYPE_CHOICES = [
+        ('follow_up', 'Follow-up'),
+        ('thank_you', 'Thank You'),
+        ('next_steps', 'Next Steps'),
+        ('meeting_summary', 'Meeting Summary'),
+        ('action_items', 'Action Items'),
+    ]
+    
+    validation_session = models.ForeignKey(ValidationSession, on_delete=models.CASCADE)
+    email_type = models.CharField(max_length=50, choices=EMAIL_TYPE_CHOICES, default='follow_up')
+    recipient_email = models.EmailField()
+    recipient_name = models.CharField(max_length=200, blank=True)
+    cc_emails = models.JSONField(default=list)
+    bcc_emails = models.JSONField(default=list)
+    subject = models.CharField(max_length=500)
+    body_html = models.TextField()
+    body_text = models.TextField(blank=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='draft')
+    approval_requested_at = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.EmailField(blank=True)
+    rejection_reason = models.TextField(blank=True)
+    scheduled_send_time = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['email_type']),
+            models.Index(fields=['scheduled_send_time']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.email_type} email to {self.recipient_email} - {self.status}"
+    
+    @property
+    def is_pending_approval(self):
+        """Check if email is pending approval"""
+        return self.status == 'pending_approval'
+    
+    @property
+    def is_scheduled(self):
+        """Check if email is scheduled for future sending"""
+        return self.status == 'scheduled' and self.scheduled_send_time
+    
+    def clean(self):
+        """Custom validation for DraftEmail model"""
+        from django.core.exceptions import ValidationError
+        
+        if not self.subject.strip():
+            raise ValidationError({'subject': 'Subject cannot be empty'})
+        
+        if not self.body_html.strip():
+            raise ValidationError({'body_html': 'Email body cannot be empty'})
+        
+        if self.scheduled_send_time and self.scheduled_send_time <= timezone.now():
+            raise ValidationError({'scheduled_send_time': 'Scheduled send time must be in the future'})
+
+
+class EmailApproval(models.Model):
+    """
+    Email approval model for tracking approval workflow
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('expired', 'Expired'),
+    ]
+    
+    draft_email = models.OneToOneField(DraftEmail, on_delete=models.CASCADE)
+    approver_email = models.EmailField()
+    approval_token = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+            models.Index(fields=['approver_email']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"Email approval for {self.draft_email.subject} - {self.status}"
+    
+    @property
+    def is_expired(self):
+        """Check if approval request has expired"""
+        return timezone.now() > self.expires_at
+    
+    def clean(self):
+        """Custom validation for EmailApproval model"""
+        from django.core.exceptions import ValidationError
+        
+        if self.expires_at <= timezone.now():
+            raise ValidationError({'expires_at': 'Expiration time must be in the future'})

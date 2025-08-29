@@ -1,7 +1,9 @@
 from rest_framework import serializers
+from django.utils import timezone
 from .models import (
     Meeting, MeetingSession, ActionItem, CallBotSession, 
-    DraftSummary, ValidationSession, CRMSyncRecord
+    DraftSummary, ValidationSession, CRMSyncRecord,
+    DraftEmail, EmailApproval
 )
 from leads.serializers import LeadSerializer
 
@@ -249,3 +251,134 @@ class ValidationSessionDetailSerializer(serializers.ModelSerializer):
                 'company': meeting.lead.company if meeting.lead else None,
             } if meeting.lead else None
         }
+
+
+class DraftEmailSerializer(serializers.ModelSerializer):
+    """
+    Serializer for DraftEmail model
+    """
+    is_pending_approval = serializers.ReadOnlyField()
+    is_scheduled = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = DraftEmail
+        fields = [
+            'id', 'email_type', 'recipient_email', 'recipient_name',
+            'cc_emails', 'bcc_emails', 'subject', 'body_html', 'body_text',
+            'status', 'approval_requested_at', 'approved_at', 'approved_by',
+            'rejection_reason', 'scheduled_send_time', 'sent_at', 'error_message',
+            'created_at', 'updated_at', 'is_pending_approval', 'is_scheduled'
+        ]
+        read_only_fields = [
+            'id', 'status', 'approval_requested_at', 'approved_at', 'approved_by',
+            'sent_at', 'error_message', 'created_at', 'updated_at',
+            'is_pending_approval', 'is_scheduled'
+        ]
+    
+    def validate_subject(self, value):
+        """Validate subject field"""
+        if not value.strip():
+            raise serializers.ValidationError("Subject cannot be empty")
+        return value.strip()
+    
+    def validate_body_html(self, value):
+        """Validate body_html field"""
+        if not value.strip():
+            raise serializers.ValidationError("Email body cannot be empty")
+        return value.strip()
+    
+    def validate_scheduled_send_time(self, value):
+        """Validate scheduled_send_time field"""
+        if value and value <= timezone.now():
+            raise serializers.ValidationError("Scheduled send time must be in the future")
+        return value
+
+
+class EmailApprovalSerializer(serializers.ModelSerializer):
+    """
+    Serializer for EmailApproval model
+    """
+    draft_email = DraftEmailSerializer(read_only=True)
+    is_expired = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = EmailApproval
+        fields = [
+            'id', 'draft_email', 'approver_email', 'approval_token',
+            'status', 'approved_at', 'rejection_reason', 'expires_at',
+            'created_at', 'is_expired'
+        ]
+        read_only_fields = [
+            'id', 'approval_token', 'approved_at', 'created_at', 'is_expired'
+        ]
+
+
+class EmailDraftCreateSerializer(serializers.Serializer):
+    """
+    Serializer for creating draft emails
+    """
+    validation_session_id = serializers.IntegerField()
+    email_type = serializers.ChoiceField(
+        choices=DraftEmail.EMAIL_TYPE_CHOICES,
+        default='follow_up'
+    )
+    recipient_email = serializers.EmailField()
+    recipient_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    cc_emails = serializers.ListField(
+        child=serializers.EmailField(),
+        required=False,
+        default=list
+    )
+    bcc_emails = serializers.ListField(
+        child=serializers.EmailField(),
+        required=False,
+        default=list
+    )
+    custom_template = serializers.CharField(required=False, allow_blank=True)
+    include_meeting_summary = serializers.BooleanField(default=True)
+    include_action_items = serializers.BooleanField(default=True)
+    include_next_steps = serializers.BooleanField(default=True)
+
+
+class EmailApprovalRequestSerializer(serializers.Serializer):
+    """
+    Serializer for requesting email approval
+    """
+    draft_email_id = serializers.IntegerField()
+    approver_email = serializers.EmailField()
+    approval_expires_hours = serializers.IntegerField(
+        required=False,
+        default=24,
+        min_value=1,
+        max_value=168  # Max 1 week
+    )
+
+
+class EmailApprovalResponseSerializer(serializers.Serializer):
+    """
+    Serializer for email approval responses
+    """
+    approval_token = serializers.CharField(max_length=100)
+    action = serializers.ChoiceField(choices=['approve', 'reject'])
+    rejection_reason = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, data):
+        """Validate approval response data"""
+        if data['action'] == 'reject' and not data.get('rejection_reason', '').strip():
+            raise serializers.ValidationError("Rejection reason is required when rejecting")
+        return data
+
+
+class ScheduledEmailSerializer(serializers.Serializer):
+    """
+    Serializer for scheduling emails
+    """
+    draft_email_id = serializers.IntegerField()
+    scheduled_send_time = serializers.DateTimeField()
+    
+    def validate_scheduled_send_time(self, value):
+        """Validate scheduled send time"""
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("Scheduled send time must be in the future")
+        return value

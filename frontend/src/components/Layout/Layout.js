@@ -21,6 +21,7 @@ import {
   People as LeadsIcon,
   TrendingUp as CompetitiveIcon,
   Assignment as ActionItemsIcon,
+  CheckCircle as ValidationIcon,
   Settings as SettingsIcon,
   Notifications as NotificationsIcon,
   AccountCircle,
@@ -37,6 +38,7 @@ const navigationItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
   { text: 'Meeting Calendar', icon: <CalendarIcon />, path: '/calendar' },
   { text: 'Debriefing', icon: <DebriefingIcon />, path: '/debriefing' },
+  { text: 'Validation', icon: <ValidationIcon />, path: '/validation' },
   { text: 'Lead Management', icon: <LeadsIcon />, path: '/leads' },
   { text: 'Competitive Intel', icon: <CompetitiveIcon />, path: '/competitive-intelligence' },
   { text: 'Action Items', icon: <ActionItemsIcon />, path: '/action-items' },
@@ -75,8 +77,8 @@ const Layout = ({ children }) => {
   const handleLogout = () => {
     logout();
     handleClose();
-  };  
-const drawer = (
+  };
+  const drawer = (
     <div>
       <Toolbar sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Box
@@ -134,7 +136,7 @@ const drawer = (
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             Meeting Intelligence
           </Typography>
-          
+
           <IconButton
             size="large"
             aria-label={`show ${unreadCount} new notifications`}
@@ -145,7 +147,7 @@ const drawer = (
               <NotificationsIcon />
             </Badge>
           </IconButton>
-          
+
           <IconButton
             size="large"
             aria-label="account of current user"
@@ -158,7 +160,7 @@ const drawer = (
               {user?.first_name?.[0] || user?.email?.[0] || <AccountCircle />}
             </Avatar>
           </IconButton>
-          
+
           <Menu
             id="menu-appbar"
             anchorEl={anchorEl}
@@ -179,7 +181,7 @@ const drawer = (
             </MenuItem>
             <MenuItem onClick={handleLogout}>Logout</MenuItem>
           </Menu>
-          
+
           <NotificationPanel
             anchorEl={notificationAnchorEl}
             open={Boolean(notificationAnchorEl)}
@@ -188,7 +190,7 @@ const drawer = (
           />
         </Toolbar>
       </AppBar>
-      
+
       <Box
         component="nav"
         sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
@@ -219,7 +221,7 @@ const drawer = (
           {drawer}
         </Drawer>
       </Box>
-      
+
       <Box
         component="main"
         sx={{

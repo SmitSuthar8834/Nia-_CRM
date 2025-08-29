@@ -46,6 +46,29 @@ This directory contains the n8n workflow configurations for the Intelligent Meet
   - Sync status tracking in Django
   - Notification system for success/failure
 
+### 5. Follow-up Email Automation Workflow (`follow-up-email.json`) ✅
+- **Purpose**: Automatically drafts and sends follow-up emails after validation completion
+- **Trigger**: Validation completion webhook
+- **Features**:
+  - Dynamic email template generation based on meeting outcomes
+  - Approval mechanism for high-priority emails (closed_won, demo_scheduled, proposal_requested)
+  - Immediate vs delayed sending logic based on outcome priority
+  - Email personalization with meeting context and action items
+  - Integration with email service and comprehensive error handling
+  - Email logging and delivery status tracking
+  - Notification system for approval requests and send status
+
+### 6. Notification and Task Creation Workflow (`notification-task-creation.json`) ✅
+- **Purpose**: Sends meeting summaries to team channels and creates follow-up tasks
+- **Trigger**: Meeting summary notification webhook
+- **Features**:
+  - Multi-channel notifications (Slack, Teams) with rich formatting
+  - Project management integration (Jira, Asana) for automatic task creation
+  - Calendar invite generation for follow-up meetings (Google Calendar, Outlook)
+  - Priority-based task assignment and due date management
+  - Comprehensive error handling and retry logic
+  - Activity logging and status tracking
+
 ## Workflow Architecture
 
 ```mermaid
@@ -61,6 +84,8 @@ graph TB
         MC[Meeting Creation]
         AI[AI Assistant]
         CU[CRM Update]
+        FE[Follow-up Email]
+        NT[Notifications & Tasks]
     end
     
     subgraph "Backend"
@@ -80,6 +105,14 @@ graph TB
     
     Django -->|webhook| CU
     CU -->|API calls| CRM
+    
+    Django -->|webhook| FE
+    FE -->|email service| Email[Email Service]
+    
+    Django -->|webhook| NT
+    NT -->|notifications| Slack[Slack/Teams]
+    NT -->|tasks| PM[Jira/Asana]
+    NT -->|calendar| Cal[Google/Outlook]
 ```
 
 ## Error Handling Strategy
@@ -109,6 +142,12 @@ python n8n_workflows/tests/test_ai_assistant_workflow.py
 
 # Run CRM Update workflow tests  
 python n8n_workflows/tests/test_crm_update_workflow.py
+
+# Run Follow-up Email workflow tests
+python n8n_workflows/tests/test_follow_up_email_workflow.py
+
+# Run Notification and Task Creation workflow tests
+python n8n_workflows/tests/test_notification_task_creation_workflow.py
 ```
 
 ## Configuration
@@ -125,6 +164,37 @@ CREATIO_API_URL=https://your-creatio-instance.com/api
 # Google Gemini AI
 GEMINI_API_KEY=your-gemini-api-key
 
+# Email Service
+EMAIL_SERVICE_URL=https://your-email-service.com
+
+# Frontend URL for approval links
+FRONTEND_URL=https://your-frontend-app.com
+
+# Slack Integration
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/your-webhook
+SLACK_SALES_CHANNEL=#sales-updates
+
+# Microsoft Teams Integration
+TEAMS_WEBHOOK_URL=https://outlook.office.com/webhook/your-webhook
+
+# Jira Integration
+JIRA_API_URL=https://your-company.atlassian.net
+JIRA_PROJECT_KEY=SALES
+JIRA_ENABLED=true
+
+# Asana Integration
+ASANA_API_URL=https://app.asana.com/api/1.0
+ASANA_PROJECT_ID=your-project-id
+ASANA_ENABLED=true
+
+# Google Calendar Integration
+GOOGLE_CALENDAR_API_URL=https://www.googleapis.com/calendar/v3
+GOOGLE_CALENDAR_ENABLED=true
+
+# Outlook Calendar Integration
+OUTLOOK_CALENDAR_API_URL=https://graph.microsoft.com/v1.0
+OUTLOOK_CALENDAR_ENABLED=true
+
 # Notifications
 NOTIFICATION_WEBHOOK_URL=https://your-notification-service.com/webhook
 ```
@@ -135,6 +205,13 @@ NOTIFICATION_WEBHOOK_URL=https://your-notification-service.com/webhook
 2. **Creatio OAuth2**: OAuth2 credentials for CRM API access
 3. **Google Calendar**: OAuth2 for calendar webhook access
 4. **Gemini AI**: API key for AI service integration
+5. **Email Service**: API key or authentication for email sending service
+6. **Slack**: Webhook URL for Slack notifications
+7. **Microsoft Teams**: Webhook URL for Teams notifications
+8. **Jira**: OAuth2 or API token for Jira integration
+9. **Asana**: Personal access token for Asana integration
+10. **Google Calendar**: OAuth2 for Google Calendar integration
+11. **Outlook Calendar**: OAuth2 for Outlook Calendar integration
 
 ## Deployment
 
@@ -168,6 +245,8 @@ This implementation satisfies the following requirements from the specification:
 - **Requirement 2.1, 2.2, 2.4**: Automatic meeting-lead matching
 - **Requirement 3.1, 3.6**: AI session initialization with context
 - **Requirement 4.1, 4.2, 4.4**: CRM updates and follow-up task creation
+- **Requirement 4.1, 4.2, 8.5**: Follow-up email automation with approval workflow
+- **Requirement 4.3, 4.4, 4.5, 4.6**: Notification and task creation automation
 - **Requirement 7.1, 7.2, 7.3**: Workflow automation and reliability
 
 All workflows include proper error handling, retry logic, and monitoring as specified in the requirements.

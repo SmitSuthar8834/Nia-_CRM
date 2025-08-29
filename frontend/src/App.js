@@ -11,6 +11,10 @@ import LeadManagement from './pages/LeadManagement/LeadManagement';
 import CompetitiveIntelligence from './pages/CompetitiveIntelligence/CompetitiveIntelligence';
 import ActionItems from './pages/ActionItems/ActionItems';
 import Settings from './pages/Settings/Settings';
+import ValidationDashboard from './pages/ValidationDashboard/ValidationDashboard';
+import ValidationSession from './pages/ValidationSession/ValidationSession';
+import MeetingDashboard from './pages/MeetingDashboard/MeetingDashboard';
+import TranscriptComparison from './pages/TranscriptComparison/TranscriptComparison';
 import LoadingSpinner from './components/Common/LoadingSpinner';
 
 function App() {
@@ -40,6 +44,10 @@ function App() {
           <Route path="/leads" element={<LeadManagement />} />
           <Route path="/competitive-intelligence" element={<CompetitiveIntelligence />} />
           <Route path="/action-items" element={<ActionItems />} />
+          <Route path="/validation" element={<ValidationDashboard />} />
+          <Route path="/validation/:sessionId" element={<ValidationSession />} />
+          <Route path="/meetings" element={<MeetingDashboard />} />
+          <Route path="/meetings/:meetingId/transcript-comparison" element={<TranscriptComparison />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/login" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
