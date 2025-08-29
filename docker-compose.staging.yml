@@ -1,0 +1,77 @@
+# Staging Docker Compose configuration
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+
+version: '3.8'
+
+services:
+  # Override web service for staging
+  web:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.staging
+      # Staging-specific environment variables
+      - ALLOWED_HOSTS=staging.yourdomain.com,localhost
+      - CORS_ALLOWED_ORIGINS=https://staging.yourdomain.com
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - logs_volume:/app/logs
+    command: >
+      sh -c "python manage.py collectstatic --noinput &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8000 
+                      --workers 2 
+                      --worker-class gevent 
+                      --worker-connections 500 
+                      --timeout 120 
+                      --access-logfile /app/logs/gunicorn-access.log 
+                      --error-logfile /app/logs/gunicorn-error.log 
+                      --log-level debug 
+                      intelligent_meeting_workflow.wsgi:application"
+
+  # Override celery for staging
+  celery:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.staging
+    volumes:
+      - logs_volume:/app/logs
+    command: >
+      celery -A intelligent_meeting_workflow worker 
+             -l debug 
+             --concurrency=2 
+             --logfile=/app/logs/celery-worker.log
+
+  # Override celery-beat for staging
+  celery-beat:
+    build:
+      target: production
+    environment:
+      - DEBUG=0
+      - DJANGO_SETTINGS_MODULE=intelligent_meeting_workflow.settings.staging
+    volumes:
+      - logs_volume:/app/logs
+
+  # Enable nginx for staging
+  nginx:
+    profiles: []  # Remove profile to enable by default
+    environment:
+      - NGINX_HOST=staging.yourdomain.com
+
+  # Staging database with moderate settings
+  db:
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-intelligent_meeting_workflow_staging}
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=128MB
+      -c effective_cache_size=512MB
+
+  # Enable n8n for staging testing
+  n8n:
+    profiles: []  # Remove profile to enable by default
